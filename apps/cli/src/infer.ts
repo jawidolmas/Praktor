@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { AcceptanceCheck } from "@exec/core";
 
 /**
@@ -9,26 +12,51 @@ import type { AcceptanceCheck } from "@exec/core";
  * else falls back to a weak generic one (something changed in the working tree).
  * The fallback is intentionally not disguised as a real check — the caller is
  * expected to surface `specific: false` to the user and suggest `--check`.
+ *
+ * Both checks shell out to a bundled Node script rather than POSIX `test`/`grep`
+ * — those depend on external coreutils being on PATH, which holds in a Git Bash
+ * shell but not in a bare Windows PowerShell/cmd.exe session (confirmed: this
+ * silently broke acceptance checks there). `node <script>` has no such
+ * dependency, since Node is guaranteed to be on PATH for exec-agent to run at all.
  */
 
 const FILE_MENTION = /\b(?:add|create|write|make)\b[^.]*?\b([\w./-]+\.[a-zA-Z0-9]{1,8})\b/i;
 
+const binDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "bin");
+const checkExistsScript = join(binDir, "check-exists.mjs");
+const checkGitDirtyScript = join(binDir, "check-git-dirty.mjs");
+
 export interface InferredCheck {
   check: AcceptanceCheck;
   specific: boolean;
+  /** Set when the requested file already exists in the repo — on a
+   *  case-insensitive filesystem (Windows, default macOS) that includes a
+   *  same-name-different-case match. A worker that reasonably avoids clobbering
+   *  it may write somewhere else, which this fixed-path check cannot follow. */
+  collisionWarning?: string;
 }
 
-export function inferCheck(text: string): InferredCheck {
+export function inferCheck(text: string, repoPath?: string): InferredCheck {
   const fileMatch = FILE_MENTION.exec(text)?.[1];
   if (fileMatch) {
+    const check: AcceptanceCheck = {
+      label: `${fileMatch} exists`,
+      command: `node "${checkExistsScript}" "${fileMatch}"`,
+      expectExitCode: 0,
+      timeoutMs: 10_000,
+    };
+    const collides = repoPath !== undefined && existsSync(join(repoPath, fileMatch));
     return {
       specific: true,
-      check: {
-        label: `${fileMatch} exists`,
-        command: `test -f "${fileMatch}" && test -s "${fileMatch}"`,
-        expectExitCode: 0,
-        timeoutMs: 10_000,
-      },
+      check,
+      ...(collides
+        ? {
+            collisionWarning:
+              `"${fileMatch}" (or a same name in a different case) already exists in this repo. ` +
+              `On a case-insensitive filesystem the worker may avoid overwriting it and write ` +
+              `somewhere else instead — this check is fixed to the literal path and won't follow that.`,
+          }
+        : {}),
     };
   }
 
@@ -36,7 +64,7 @@ export function inferCheck(text: string): InferredCheck {
     specific: false,
     check: {
       label: "something changed",
-      command: "git status --porcelain | grep -q .",
+      command: `node "${checkGitDirtyScript}"`,
       expectExitCode: 0,
       timeoutMs: 10_000,
     },

@@ -44,18 +44,64 @@ export function createWorktree(args: CreateWorktreeArgs): WorktreeHandle {
   return { repoPath: args.repoPath, path: args.worktreePath, branch: args.branch };
 }
 
-export function removeWorktree(handle: WorktreeHandle): void {
-  try {
-    git(handle.repoPath, ["worktree", "remove", handle.path, "--force"]);
-  } catch {
-    // The worktree may already be gone or locked; fall back to a plain delete so
-    // cleanup never blocks the rest of the run on a git-level disagreement.
-    rmSync(handle.path, { recursive: true, force: true });
+/**
+ * Block the calling thread without spinning — the clean way to retry a
+ * filesystem operation after a short pause without pulling in async/await
+ * everywhere else in this deliberately synchronous module.
+ */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+const CLEANUP_RETRY_DELAYS_MS = [200, 500, 1000];
+
+/** Retry a synchronous operation with short backoff. Never throws — returns
+ *  whether it eventually succeeded. */
+function retrySync(fn: () => void): boolean {
+  for (let attempt = 0; attempt <= CLEANUP_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      git(handle.repoPath, ["worktree", "prune"]);
+      fn();
+      return true;
     } catch {
-      /* best effort */
+      if (attempt === CLEANUP_RETRY_DELAYS_MS.length) return false;
+      sleepSync(CLEANUP_RETRY_DELAYS_MS[attempt]!);
     }
+  }
+  return false;
+}
+
+/**
+ * Remove a worktree. Never throws — a cleanup failure must never crash the
+ * rest of the run, only leave a directory behind for manual cleanup.
+ *
+ * `git worktree remove` can fail on Windows even after it has already deleted
+ * almost everything: antivirus or the search indexer can transiently lock a
+ * directory right after a batch of file deletes inside it, so git's own final
+ * rmdir step fails and it reports the whole command as failed. A short retry
+ * lets that lock clear before falling back to a plain recursive delete (also
+ * retried the same way) — which keeps git's own worktree bookkeeping intact in
+ * the common case instead of always reaching for the blunt fallback.
+ */
+export function removeWorktree(handle: WorktreeHandle): void {
+  const gitRemoved = retrySync(() =>
+    git(handle.repoPath, ["worktree", "remove", handle.path, "--force"]),
+  );
+  if (gitRemoved) return;
+
+  const plainRemoved = retrySync(() =>
+    rmSync(handle.path, { recursive: true, force: true }),
+  );
+  if (!plainRemoved) {
+    console.warn(
+      `warning: could not remove worktree at ${handle.path}. ` +
+        `Left in place — safe to delete by hand once nothing has it open.`,
+    );
+  }
+
+  try {
+    git(handle.repoPath, ["worktree", "prune"]);
+  } catch {
+    /* best effort — worktree bookkeeping cleanup is not worth failing over */
   }
 }
 

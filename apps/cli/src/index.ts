@@ -123,7 +123,7 @@ async function runDo(sentence: string | undefined, rest: string[]): Promise<void
   if (explicitChecks.length > 0) {
     checks = explicitChecks.map(parseCheck);
   } else {
-    const inferred = inferCheck(sentence);
+    const inferred = inferCheck(sentence, repoPath);
     checks = [inferred.check];
     if (!inferred.specific) {
       console.log(
@@ -132,6 +132,9 @@ async function runDo(sentence: string | undefined, rest: string[]): Promise<void
       );
     } else {
       console.log(`Inferred check: ${inferred.check.label} -> ${inferred.check.command}`);
+    }
+    if (inferred.collisionWarning) {
+      console.log(`Note: ${inferred.collisionWarning}`);
     }
   }
 
