@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import type { Database as SqliteDatabase } from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -27,7 +28,10 @@ export interface OpenDbOptions {
  * concurrently without blocking it.
  */
 export function openDb(options: OpenDbOptions = {}): ExecDbHandle {
-  const home = process.env["EXEC_HOME"] ?? ".exec";
+  // Fixed by default (not resolved against the invoking shell's cwd) — this is
+  // meant to be one central database regardless of where `exec-agent` is run
+  // from. Override EXEC_HOME to scope state to a single project instead.
+  const home = process.env["EXEC_HOME"] ?? join(homedir(), ".exec-agent");
   const requested = options.path ?? `${home}/exec.db`;
   // ":memory:" is passed through untouched so tests can run without touching disk.
   const path = requested === ":memory:" ? requested : resolve(requested);

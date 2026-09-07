@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "An executive agent that supervises coding agents as a workforce",
+  "bin": {
+    "exec-agent": "./bin/exec-agent.mjs"
+  },
   "engines": {
     "node": ">=24"
   },

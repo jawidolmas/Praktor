@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import {
   newId,
@@ -162,8 +163,13 @@ export async function runObjective(args: RunObjectiveArgs): Promise<void> {
     // ".exec/" to keep a worker from touching the supervisor's own database and
     // control state. A worktree is the worker's own output, not supervisor
     // state, so it lives in a separate directory the policy does not match.
+    //
+    // Fixed under the home directory by default, same reasoning as the database
+    // in packages/db/src/client.ts: state must not depend on the invoking
+    // shell's cwd, or `exec-agent` run from two different directories quietly
+    // becomes two disconnected islands of state.
     const worktreePath = resolve(
-      process.env["EXEC_WORKTREES_DIR"] ?? ".exec-worktrees",
+      process.env["EXEC_WORKTREES_DIR"] ?? join(homedir(), ".exec-agent", "worktrees"),
       `${taskId}-${attempt}`,
     );
 
