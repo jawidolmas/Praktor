@@ -158,9 +158,12 @@ export async function runObjective(args: RunObjectiveArgs): Promise<void> {
     const runId = newId();
     const sessionId = newSessionId();
     const branch = `exec/${taskId.slice(0, 8)}-attempt-${attempt}`;
+    // Deliberately NOT under EXEC_HOME: POLICY-005 denies any write under
+    // ".exec/" to keep a worker from touching the supervisor's own database and
+    // control state. A worktree is the worker's own output, not supervisor
+    // state, so it lives in a separate directory the policy does not match.
     const worktreePath = resolve(
-      process.env["EXEC_HOME"] ?? ".exec",
-      "worktrees",
+      process.env["EXEC_WORKTREES_DIR"] ?? ".exec-worktrees",
       `${taskId}-${attempt}`,
     );
 

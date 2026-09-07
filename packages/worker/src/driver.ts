@@ -208,6 +208,17 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
   const startedAt = Date.now();
   const q = query({ prompt: buildPrompt(args.prompt), options });
 
+  // Set once we decide to stop (stall or rate limit). After that we stop
+  // re-running detection and stop re-interrupting, but we deliberately keep
+  // draining the generator rather than breaking immediately — interrupt() asks
+  // the SDK to stop, it does not guarantee no further messages, and the final
+  // `result` message is the only source of the real total_cost_usd for this run.
+  // Breaking early silently turns "stalled after spending real tokens" into a
+  // reported $0.00, which is the wrong thing to show for a subscription whose
+  // whole point is a shared, limited usage pool.
+  let stopping = false;
+  let finishedEmitted = false;
+
   for await (const msg of q) {
     if (msg.type === "assistant") {
       turns += 1;
@@ -231,6 +242,8 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
         contextFraction: contextFraction(sample, contextWindow),
       });
 
+      if (stopping) continue;
+
       const wallClockMs = Date.now() - startedAt;
       const stall =
         wallClockMs > args.budget.maxWallClockMs
@@ -246,17 +259,18 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
             });
       if (stall) {
         stallSignal = stall;
+        stopping = true;
+        exitReason = "stalled";
         args.onEvent({ type: "stall.detected", signal: stall.signal, detail: stall.detail });
         await q.interrupt().catch(() => {
-          /* best effort — we are exiting the loop either way */
+          /* best effort — we keep draining the generator either way */
         });
-        exitReason = "stalled";
-        break;
       }
       continue;
     }
 
     if (msg.type === "rate_limit_event") {
+      if (stopping) continue;
       const info: RateLimitInfo = {
         status: msg.rate_limit_info.status,
         resetsAt: msg.rate_limit_info.resetsAt,
@@ -265,14 +279,14 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
       };
       const verdict = interpretRateLimit(info);
       if (verdict.park) {
+        stopping = true;
+        exitReason = "rate_limited";
         args.onEvent({
           type: "ratelimit.hit",
           source: "result",
           retryDelayMs: verdict.resumeAt ? Math.max(0, verdict.resumeAt - Date.now()) : undefined,
         });
         await q.interrupt().catch(() => {});
-        exitReason = "rate_limited";
-        break;
       }
       continue;
     }
@@ -287,6 +301,7 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
         // Only override if nothing more specific (stall/rate-limit) already fired.
         exitReason = msg.subtype === "error_max_turns" ? "budget_exhausted" : "error";
       }
+      finishedEmitted = true;
       args.onEvent({
         type: "run.finished",
         exitReason,
@@ -297,6 +312,21 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
       });
       break;
     }
+  }
+
+  // The generator ended (or we broke on a result) without a result message ever
+  // arriving — e.g. interrupted before the SDK produced one. Record what actually
+  // happened using the last known turn/usage rather than leaving no terminal event
+  // and an implied-zero cost for a run that really did spend tokens.
+  if (!finishedEmitted) {
+    args.onEvent({
+      type: "run.finished",
+      exitReason,
+      turns,
+      usage,
+      costUsdEstimate,
+      durationMs: Date.now() - startedAt,
+    });
   }
 
   return {
