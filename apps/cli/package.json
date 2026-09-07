@@ -1,0 +1,12 @@
+{
+  "name": "@exec/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@exec/core": "*",
+    "@exec/db": "*",
+    "@exec/policy": "*",
+    "@exec/worker": "*"
+  }
+}

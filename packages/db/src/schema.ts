@@ -1,0 +1,226 @@
+import { sql } from "drizzle-orm";
+import {
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
+import type {
+  AcceptanceSpec,
+  Budget,
+  Checkpoint,
+  DecisionOption,
+  EventPayload,
+  PolicyMatcher,
+  TokenUsage,
+} from "@exec/core";
+
+/**
+ * SQLite schema, deliberately kept Postgres-portable: integer epoch-millis
+ * timestamps, text primary keys, and JSON held in text columns (which map to jsonb
+ * on Postgres without a data migration). No SQLite-only types are used.
+ */
+
+const now = sql`(unixepoch() * 1000)`;
+
+export const objectives = sqliteTable("objectives", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  brief: text("brief").notNull().default(""),
+  repoPath: text("repo_path").notNull(),
+  baseRef: text("base_ref").notNull().default("HEAD"),
+  status: text("status").notNull().default("draft"),
+  budget: text("budget", { mode: "json" }).$type<Budget>().notNull(),
+  createdAt: integer("created_at").notNull().default(now),
+  updatedAt: integer("updated_at").notNull().default(now),
+});
+
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    objectiveId: text("objective_id")
+      .notNull()
+      .references(() => objectives.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    title: text("title").notNull(),
+    intent: text("intent").notNull(),
+    taskClass: text("task_class").notNull(),
+    acceptance: text("acceptance", { mode: "json" })
+      .$type<AcceptanceSpec>()
+      .notNull(),
+    dependsOn: text("depends_on", { mode: "json" })
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    budget: text("budget", { mode: "json" }).$type<Budget>().notNull(),
+    ruledOut: text("ruled_out", { mode: "json" })
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    createdAt: integer("created_at").notNull().default(now),
+    updatedAt: integer("updated_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("tasks_objective_key_idx").on(t.objectiveId, t.key),
+    index("tasks_status_idx").on(t.status),
+  ],
+);
+
+export const runs = sqliteTable(
+  "runs",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    objectiveId: text("objective_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    /** UUID we assign and pass to the SDK, so our row and the transcript agree. */
+    sessionId: text("session_id").notNull(),
+    model: text("model").notNull(),
+    effort: text("effort").notNull().default("high"),
+    worktreePath: text("worktree_path").notNull(),
+    status: text("status").notNull().default("running"),
+    exitReason: text("exit_reason"),
+    turns: integer("turns").notNull().default(0),
+    usage: text("usage", { mode: "json" }).$type<TokenUsage>().notNull(),
+    costUsdEstimate: real("cost_usd_estimate").notNull().default(0),
+    startedAt: integer("started_at").notNull().default(now),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [
+    uniqueIndex("runs_session_idx").on(t.sessionId),
+    index("runs_task_idx").on(t.taskId),
+  ],
+);
+
+/**
+ * Append-only. This is the source of truth; every other table is a projection.
+ * Nothing in the system updates or deletes an event row.
+ */
+export const events = sqliteTable(
+  "events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ts: integer("ts").notNull().default(now),
+    level: text("level").notNull().default("info"),
+    objectiveId: text("objective_id"),
+    taskId: text("task_id"),
+    runId: text("run_id"),
+    type: text("type").notNull(),
+    payload: text("payload", { mode: "json" }).$type<EventPayload>().notNull(),
+  },
+  (t) => [
+    index("events_ts_idx").on(t.ts),
+    index("events_objective_idx").on(t.objectiveId, t.ts),
+    index("events_run_idx").on(t.runId, t.ts),
+    index("events_type_idx").on(t.type),
+  ],
+);
+
+export const decisions = sqliteTable(
+  "decisions",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    objectiveId: text("objective_id").notNull(),
+    taskId: text("task_id"),
+    runId: text("run_id"),
+    level: text("level").notNull(),
+    title: text("title").notNull(),
+    context: text("context").notNull(),
+    options: text("options", { mode: "json" })
+      .$type<DecisionOption[]>()
+      .notNull(),
+    recommendation: text("recommendation").notNull(),
+    risk: text("risk").notNull(),
+    blockedTaskIds: text("blocked_task_ids", { mode: "json" })
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    status: text("status").notNull().default("open"),
+    answer: text("answer"),
+    answeredBy: text("answered_by"),
+    answeredAt: integer("answered_at"),
+    rationale: text("rationale"),
+    deadline: integer("deadline"),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("decisions_key_idx").on(t.key),
+    index("decisions_status_idx").on(t.status),
+  ],
+);
+
+export const policies = sqliteTable(
+  "policies",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    title: text("title").notNull(),
+    rationale: text("rationale").notNull().default(""),
+    matcher: text("matcher", { mode: "json" })
+      .$type<PolicyMatcher>()
+      .notNull(),
+    severity: text("severity").notNull(),
+    action: text("action").notNull(),
+    scope: text("scope").notNull().default("global"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("policies_key_idx").on(t.key)],
+);
+
+export const memories = sqliteTable(
+  "memories",
+  {
+    id: text("id").primaryKey(),
+    tier: text("tier").notNull(),
+    scopeId: text("scope_id").notNull().default(""),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    source: text("source").notNull().default(""),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (t) => [index("memories_tier_scope_idx").on(t.tier, t.scopeId)],
+);
+
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(), // checkpoint | diff | report | log
+    objectiveId: text("objective_id"),
+    taskId: text("task_id"),
+    runId: text("run_id"),
+    content: text("content", { mode: "json" })
+      .$type<Checkpoint | Record<string, unknown> | string>()
+      .notNull(),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (t) => [
+    index("artifacts_kind_idx").on(t.kind),
+    index("artifacts_run_idx").on(t.runId),
+  ],
+);
+
+/** Monotonic sequences behind the human-facing DEC-nnn / POLICY-nnn keys. */
+export const counters = sqliteTable("counters", {
+  name: text("name").primaryKey(),
+  value: integer("value").notNull().default(0),
+});
+
+export type ObjectiveRow = typeof objectives.$inferSelect;
+export type TaskRow = typeof tasks.$inferSelect;
+export type RunRow = typeof runs.$inferSelect;
+export type EventRow = typeof events.$inferSelect;
+export type DecisionRow = typeof decisions.$inferSelect;
+export type PolicyRow = typeof policies.$inferSelect;
+export type MemoryRow = typeof memories.$inferSelect;
+export type ArtifactRow = typeof artifacts.$inferSelect;

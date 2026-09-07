@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Supervisor state — the whole org state lives here
+.exec/
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets
+.env
+.env.local
+
+# Worker scratch
+.worktrees/
+
+# Disposable demo/test repos used for manual smoke-testing the CLI
+.scratch/

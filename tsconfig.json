@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/db" },
+    { "path": "./packages/policy" },
+    { "path": "./packages/worker" },
+    { "path": "./apps/cli" }
+  ]
+}
