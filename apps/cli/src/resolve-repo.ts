@@ -49,6 +49,24 @@ export function findGitRepos(): RepoCandidate[] {
 
 const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
+/**
+ * Locational-preposition mentions: "in takil-workspace", "for the takil-workspace
+ * repo", "to takil-workspace". This is what actually distinguishes a sentence
+ * naming its target repo from a repo's name showing up as an ordinary word
+ * elsewhere in the request — this project is itself named "agent", and "agent"
+ * is also just an English word, so "Hello, agent" as file content must not be
+ * read as naming the repo. A global regex is re-instantiated per call since it
+ * is stateful (lastIndex) and this function must be safe to call repeatedly.
+ */
+function extractPrepositionalMentions(text: string): string[] {
+  const pattern = /\b(?:in|into|inside|within|for|on|at|to)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9._-]*)/gi;
+  const mentions: string[] = [];
+  for (const m of text.matchAll(pattern)) {
+    if (m[1]) mentions.push(m[1]);
+  }
+  return mentions;
+}
+
 export interface ResolveRepoResult {
   match?: RepoCandidate;
   /** Every repo found under the search roots, for a helpful error message. */
@@ -57,13 +75,27 @@ export interface ResolveRepoResult {
   ambiguous: RepoCandidate[];
 }
 
-/** Find the one repo under the search roots whose name is mentioned in the text. */
-export function resolveRepoFromText(text: string): ResolveRepoResult {
-  const known = findGitRepos();
-  const haystack = normalize(text);
-  const hits = known.filter((c) => haystack.includes(normalize(c.name)));
+/**
+ * Find the one repo under the search roots the text names as its target.
+ *
+ * Two passes: first, only names explicitly called out with a locational
+ * preposition — precise, and what real requests actually look like. Only if
+ * that finds nothing does it fall back to a broad "the name appears anywhere in
+ * the text" scan, for phrasings without a preposition (e.g. "takil-workspace:
+ * add X") — looser, but better than refusing outright.
+ */
+export function resolveRepoFromText(
+  text: string,
+  known: RepoCandidate[] = findGitRepos(),
+): ResolveRepoResult {
+  const mentioned = new Set(extractPrepositionalMentions(text).map(normalize));
+  const preciseHits = known.filter((c) => mentioned.has(normalize(c.name)));
+  if (preciseHits.length === 1) return { match: preciseHits[0]!, known, ambiguous: [] };
+  if (preciseHits.length > 1) return { known, ambiguous: preciseHits };
 
-  if (hits.length === 1) return { match: hits[0]!, known, ambiguous: [] };
-  if (hits.length > 1) return { known, ambiguous: hits };
+  const haystack = normalize(text);
+  const looseHits = known.filter((c) => haystack.includes(normalize(c.name)));
+  if (looseHits.length === 1) return { match: looseHits[0]!, known, ambiguous: [] };
+  if (looseHits.length > 1) return { known, ambiguous: looseHits };
   return { known, ambiguous: [] };
 }

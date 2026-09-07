@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import type { AcceptanceCheck, EffortLevel } from "@exec/core";
+import type { AcceptanceCheck } from "@exec/core";
+import { parseArgs, parseCheck, readRunOptions } from "./args.js";
 import { printEvents } from "./events.js";
 import { inferCheck } from "./infer.js";
 import { resolveRepoFromText } from "./resolve-repo.js";
@@ -16,11 +17,12 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
 sentence (it's matched against git repos under ~/Desktop — set
 EXEC_REPO_SEARCH_PATHS to add more places to look), and it infers a check where
 it reasonably can ("add/create <file>" gets a real file-exists check; anything
-else falls back to a weak "something changed" check and says so). Override any
-of it with the same flags "run" takes.
+else falls back to a weak "something changed" check and says so). Flags can go
+anywhere — before the sentence, after it, or both. Override any of it with the
+same flags "run" takes.
 
   exec-agent do "add test.md in takil-workspace"
-  exec-agent do "add a CONTRIBUTING.md" --repo ../some/repo
+  exec-agent do --repo ../some/repo "add a CONTRIBUTING.md"
   exec-agent do "refactor the auth module in takil-workspace" --check "tests=npm test"
 
 "run" is the explicit path — no inference, you state everything:
@@ -47,52 +49,23 @@ Example:
     --check "tests=node math.test.mjs"
 `;
 
-function parseArgs(argv: string[]): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg?.startsWith("--")) continue;
-    const name = arg.slice(2);
-    const value = argv[i + 1];
-    if (value === undefined || value.startsWith("--")) {
-      out.set(name, [...(out.get(name) ?? []), "true"]);
-      continue;
-    }
-    out.set(name, [...(out.get(name) ?? []), value]);
-    i++;
-  }
-  return out;
-}
+async function runDo(argv: string[]): Promise<void> {
+  const { flags, positional } = parseArgs(argv);
+  // Flags can appear before, after, or around the sentence — join whatever
+  // positional text is left over, in its original order, rather than requiring
+  // it to be argv[0].
+  const sentence = positional.join(" ").trim() || undefined;
 
-function parseCheck(spec: string): AcceptanceCheck {
-  const eq = spec.indexOf("=");
-  const label = eq > 0 ? spec.slice(0, eq) : spec;
-  const command = eq > 0 ? spec.slice(eq + 1) : spec;
-  return { label, command, expectExitCode: 0, timeoutMs: 10 * 60_000 };
-}
-
-/** Common run-shaping flags, shared by "run" and as overrides on "do". */
-function readRunOptions(args: Map<string, string[]>) {
-  return {
-    model: args.get("model")?.[0] ?? "claude-sonnet-5",
-    effort: (args.get("effort")?.[0] ?? "high") as EffortLevel,
-    baseRef: args.get("base-ref")?.[0] ?? "HEAD",
-    maxAttempts: Number(args.get("max-attempts")?.[0] ?? "3"),
-    maxTurns: Number(args.get("max-turns")?.[0] ?? "30"),
-    maxWallClockMs: Number(args.get("max-wall-clock-min")?.[0] ?? "20") * 60_000,
-  };
-}
-
-async function runDo(sentence: string | undefined, rest: string[]): Promise<void> {
   if (!sentence) {
     console.error(USAGE);
-    console.error('error: "do" needs a sentence, e.g. exec-agent do "add test.md in takil-workspace"\n');
+    console.error(
+      'error: "do" needs a sentence, e.g. exec-agent do "add test.md in takil-workspace"\n',
+    );
     process.exitCode = 1;
     return;
   }
 
-  const args = parseArgs(rest);
-  let repoPath = args.get("repo")?.[0];
+  let repoPath = flags.get("repo")?.[0];
 
   if (!repoPath) {
     const resolved = resolveRepoFromText(sentence);
@@ -118,7 +91,7 @@ async function runDo(sentence: string | undefined, rest: string[]): Promise<void
     }
   }
 
-  const explicitChecks = args.get("check") ?? [];
+  const explicitChecks = flags.get("check") ?? [];
   let checks: AcceptanceCheck[];
   if (explicitChecks.length > 0) {
     checks = explicitChecks.map(parseCheck);
@@ -138,8 +111,8 @@ async function runDo(sentence: string | undefined, rest: string[]): Promise<void
     }
   }
 
-  const title = args.get("title")?.[0] ?? sentence.slice(0, 72);
-  const opts = readRunOptions(args);
+  const title = flags.get("title")?.[0] ?? sentence.slice(0, 72);
+  const opts = readRunOptions(flags);
 
   await runObjective({
     repoPath,
@@ -155,11 +128,11 @@ async function runDo(sentence: string | undefined, rest: string[]): Promise<void
   });
 }
 
-async function runRun(rest: string[]): Promise<void> {
-  const args = parseArgs(rest);
-  const repoPath = args.get("repo")?.[0];
-  const intent = args.get("intent")?.[0];
-  const checkSpecs = args.get("check") ?? [];
+async function runRun(argv: string[]): Promise<void> {
+  const { flags } = parseArgs(argv);
+  const repoPath = flags.get("repo")?.[0];
+  const intent = flags.get("intent")?.[0];
+  const checkSpecs = flags.get("check") ?? [];
 
   if (!repoPath || !intent || checkSpecs.length === 0) {
     console.error(USAGE);
@@ -168,8 +141,8 @@ async function runRun(rest: string[]): Promise<void> {
     return;
   }
 
-  const title = args.get("title")?.[0] ?? intent.slice(0, 72);
-  const opts = readRunOptions(args);
+  const title = flags.get("title")?.[0] ?? intent.slice(0, 72);
+  const opts = readRunOptions(flags);
 
   await runObjective({
     repoPath,
@@ -200,7 +173,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "do") {
-    await runDo(rest[0], rest.slice(1));
+    await runDo(rest);
     return;
   }
 
