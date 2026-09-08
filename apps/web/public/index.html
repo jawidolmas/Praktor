@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Praktor Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Praktor <span>supervisor dashboard</span></div>
+    <div class="muted mono" id="clock"></div>
+  </header>
+  <main>
+    <section class="panel">
+      <h2>Objectives</h2>
+      <div id="objectives"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Decisions needing an answer</h2>
+      <div id="decisions"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Policies</h2>
+      <div id="policies"><div class="empty">Loading…</div></div>
+    </section>
+
+    <footer class="hint">Read-only view of the local exec-agent database. Decisions are still answered in the terminal running the objective.</footer>
+  </main>
+
+  <script src="/app.js"></script>
+  <script src="/index.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "@exec/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@exec/core": "*",
+    "@exec/db": "*",
+    "drizzle-orm": "^0.45.2"
+  }
+}

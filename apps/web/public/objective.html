@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Objective — Praktor Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><a href="/">Praktor</a> <span id="crumb">/ objective</span></div>
+    <div class="muted mono"><span class="live-dot" id="liveDot"></span> <span id="liveLabel">connecting…</span></div>
+  </header>
+  <main>
+    <section class="panel" id="headerPanel">
+      <h2>Objective</h2>
+      <div class="empty">Loading…</div>
+    </section>
+
+    <section class="panel">
+      <h2>Tasks &amp; runs</h2>
+      <div id="tasks"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Decisions</h2>
+      <div id="decisions"><div class="empty">None yet.</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Live event log</h2>
+      <div class="log" id="log"><div class="empty">Connecting…</div></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+  <script src="/objective.js"></script>
+</body>
+</html>

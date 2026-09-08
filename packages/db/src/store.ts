@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import {
   PolicySchema,
   type EventLevel,
@@ -54,12 +54,17 @@ export function appendEvent(db: Db, args: AppendEventArgs): void {
 
 export function readEvents(
   db: Db,
+  /** `since` is an event id cursor (not a timestamp): "rows after the last one I
+   *  already have", which is what a polling reader (the dashboard) needs — a
+   *  timestamp can collide or go backwards across processes, an autoincrement
+   *  id can't. */
   filter: { objectiveId?: string; runId?: string; since?: number; limit?: number },
 ) {
   const conditions = [];
   if (filter.objectiveId)
     conditions.push(eq(events.objectiveId, filter.objectiveId));
   if (filter.runId) conditions.push(eq(events.runId, filter.runId));
+  if (filter.since !== undefined) conditions.push(gt(events.id, filter.since));
 
   const q = db
     .select()

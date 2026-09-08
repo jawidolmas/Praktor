@@ -87,6 +87,21 @@ exec-agent events <objective-id>   # full event log for that run
 Every run prints its objective id and the git branch (`exec/<id>-attempt-N`) the work landed on.
 Nothing is ever merged automatically — review the branch and merge it yourself.
 
+## Dashboard
+
+```bash
+npm run dashboard
+```
+
+Starts a local, read-only web view of the same database `exec-agent` writes to — objectives,
+tasks, per-attempt runs with token usage and cost, open decisions, the active policy set, and a
+live-updating event log per objective (an SSE stream, so you watch a run happen without the
+terminal it's running in). It opens on `http://127.0.0.1:4317` by default; override with
+`EXEC_WEB_PORT` / `EXEC_WEB_HOST`. Nothing here writes to the database — `exec-agent` itself is
+still the only writer, and SQLite's WAL mode is what lets the dashboard read concurrently with a
+run in progress without blocking it. Decisions are still answered in the terminal running the
+objective; the dashboard shows them, it doesn't (yet) answer them.
+
 ## Configuration
 
 All via environment variables (see `.env.example`):
