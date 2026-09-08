@@ -1,4 +1,5 @@
 import { openDb, readEvents, runMigrations } from "@exec/db";
+import { reconcileSeedPolicies } from "./run.js";
 
 /** Dump the durable event log for an objective — the "come back to a report,
  *  not a transcript" promise, at its most literal: every decision this system
@@ -9,6 +10,11 @@ export function printEvents(objectiveId: string): void {
   // reading rather than crashing on "no such table" the first time this is
   // called before any "run"/"do".
   runMigrations(db);
+  // Every command that opens the database reconciles built-in policies, not
+  // just "run"/"do" — a policy fix must reach an install the moment any
+  // command touches its database, not only the next time something spawns a
+  // worker.
+  reconcileSeedPolicies(db);
   const rows = readEvents(db, { objectiveId, limit: 5000 });
 
   if (rows.length === 0) {

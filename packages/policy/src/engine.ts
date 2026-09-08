@@ -64,7 +64,14 @@ function matches(policy: Policy, call: ToolCall): boolean {
   if (matcher.commandPattern) {
     const command = extractCommand(call);
     if (command === undefined) return false;
-    if (!new RegExp(matcher.commandPattern, "i").test(command)) return false;
+    // A string is one test; an array requires every pattern to match (AND) —
+    // see the schema doc comment for why this matters for security policies.
+    const patterns = Array.isArray(matcher.commandPattern)
+      ? matcher.commandPattern
+      : [matcher.commandPattern];
+    for (const pattern of patterns) {
+      if (!new RegExp(pattern, "i").test(command)) return false;
+    }
   }
 
   if (matcher.pathPattern) {

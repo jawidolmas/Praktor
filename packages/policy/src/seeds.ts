@@ -10,11 +10,17 @@ export const SEED_POLICIES: Omit<Policy, "id" | "key" | "createdAt">[] = [
   {
     title: "No force-push, and no direct push to a protected branch",
     rationale:
-      "Rewriting shared history or bypassing review is not recoverable by a retry.",
+      "Rewriting shared history or bypassing review is not recoverable by a retry. " +
+      "Found live: the original single-pattern version required \"push\" to sit " +
+      "immediately after \"git\", which silently let git -C <path> push origin main " +
+      "through — a worker's own idiomatic phrasing, not an edge case. Matched as an " +
+      "array (every pattern must be present, anywhere) so it survives that.",
     matcher: {
       tool: "Bash",
-      commandPattern:
-        "git\\s+push\\b.*(--force|-f\\b|\\borigin\\s+(main|master|prod|production)\\b)",
+      commandPattern: [
+        "\\bpush\\b",
+        "(?:--force(?:-with-lease)?\\b|\\borigin\\b[^;&|\\n]{0,20}?[:\\s](?:main|master|prod|production)\\b)",
+      ],
     },
     severity: "HARD",
     action: "deny",

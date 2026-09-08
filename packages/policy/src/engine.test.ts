@@ -46,6 +46,26 @@ describe("matching", () => {
     expect(evaluate(seeded, bash("git push origin my-feature")).action).toBe("allow");
   });
 
+  it("still denies a push to main phrased with git's own -C flag", () => {
+    // The real bug: the single-pattern version required "push" immediately
+    // after "git", so this — the worker's own idiomatic phrasing, seen live,
+    // not a contrived edge case — sailed through as an unmatched, allowed call.
+    const real = 'git -C "C:/Users/USER/Desktop/takil-workspace" push origin main && git -C "C:/Users/USER/Desktop/takil-workspace" status';
+    expect(evaluate(seeded, bash(real)).action).toBe("deny");
+  });
+
+  it("denies push-to-protected-branch under other common refspec and flag forms", () => {
+    expect(evaluate(seeded, bash("git push origin HEAD:main")).action).toBe("deny");
+    expect(evaluate(seeded, bash("git --git-dir=/repo/.git push origin master")).action).toBe("deny");
+    expect(evaluate(seeded, bash("git push -f origin main")).action).toBe("deny");
+    expect(evaluate(seeded, bash("git push --force-with-lease origin main")).action).toBe("deny");
+  });
+
+  it("does not over-block a push to a feature branch just for using -C", () => {
+    const benign = 'git -C "C:/repo" push origin my-feature-branch';
+    expect(evaluate(seeded, bash(benign)).action).toBe("allow");
+  });
+
   it("denies writes to secrets and to the supervisor's own state", () => {
     expect(evaluate(seeded, { tool: "Write", input: { file_path: "/repo/.env" } }).action).toBe("deny");
     expect(evaluate(seeded, { tool: "Edit", input: { file_path: "/repo/.exec/exec.db" } }).action).toBe("deny");
@@ -66,6 +86,21 @@ describe("matching", () => {
 
   it("is case-insensitive on the tool name and the command", () => {
     expect(evaluate(seeded, { tool: "bash", input: { command: "GIT PUSH --FORCE origin x" } }).action).toBe("deny");
+  });
+});
+
+describe("array commandPattern (AND semantics)", () => {
+  it("requires every pattern to match, not just one", () => {
+    const both = policy({ matcher: { tool: "Bash", commandPattern: ["foo", "bar"] } });
+    expect(evaluate([both], bash("foo baz")).action).toBe("allow"); // only "foo"
+    expect(evaluate([both], bash("bar baz")).action).toBe("allow"); // only "bar"
+    expect(evaluate([both], bash("foo and bar")).action).toBe("deny"); // both
+  });
+
+  it("does not require the patterns to be adjacent or in order", () => {
+    const both = policy({ matcher: { tool: "Bash", commandPattern: ["push", "origin"] } });
+    expect(evaluate([both], bash("git -C /x push origin main")).action).toBe("deny");
+    expect(evaluate([both], bash("git fetch origin && git push")).action).toBe("deny");
   });
 });
 

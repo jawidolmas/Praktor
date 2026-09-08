@@ -255,8 +255,19 @@ export type PolicyAction = z.infer<typeof PolicyAction>;
 export const PolicyMatcherSchema = z.object({
   /** Tool name, e.g. "Bash", "Edit", "Write". Omit to match any tool. */
   tool: z.string().optional(),
-  /** Regex against the Bash command string. */
-  commandPattern: z.string().optional(),
+  /**
+   * Regex (or several) against the Bash command string. A single string is one
+   * test; an array requires every pattern to match (AND) — each pattern stays
+   * small and readable, and the co-occurrence itself is what signals danger.
+   * Prefer an array over one dense pattern for anything security-relevant: a
+   * single regex trying to pin an exact command shape (e.g. requiring "git"
+   * immediately adjacent to "push") breaks the moment a worker phrases the
+   * same command differently (e.g. `git -C <path> push` instead of `git push`
+   * after `cd`) — a real case that let a "no push to main" policy through
+   * silently. An array of independent signals ("contains push", "contains a
+   * protected branch as the push target") stays robust to phrasing.
+   */
+  commandPattern: z.union([z.string(), z.array(z.string()).min(1)]).optional(),
   /** Regex against a file path argument. */
   pathPattern: z.string().optional(),
 });
