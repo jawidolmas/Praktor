@@ -50,7 +50,10 @@ export function parseCheck(spec: string): AcceptanceCheck {
 export function readRunOptions(flags: Map<string, string[]>) {
   return {
     model: flags.get("model")?.[0] ?? "claude-sonnet-5",
-    effort: (flags.get("effort")?.[0] ?? "high") as EffortLevel,
+    // Real runs averaged 10.3 turns / 100s for one-line-file tasks, mostly
+    // orientation rather than thinking — "high" was overkill for the
+    // straightforward end of the workload. Still fully overridable per task.
+    effort: (flags.get("effort")?.[0] ?? "medium") as EffortLevel,
     baseRef: flags.get("base-ref")?.[0] ?? "HEAD",
     maxAttempts: Number(flags.get("max-attempts")?.[0] ?? "3"),
     maxTurns: Number(flags.get("max-turns")?.[0] ?? "30"),

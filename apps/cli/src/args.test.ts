@@ -55,7 +55,7 @@ describe("readRunOptions", () => {
     const opts = readRunOptions(new Map());
     expect(opts).toMatchObject({
       model: "claude-sonnet-5",
-      effort: "high",
+      effort: "medium",
       baseRef: "HEAD",
       maxAttempts: 3,
       maxTurns: 30,

@@ -34,6 +34,7 @@ import {
   type TurnSample,
 } from "./telemetry.js";
 import { churn } from "./worktree.js";
+import { buildRepoBriefing, renderBriefing } from "./briefing.js";
 
 /**
  * The worker driver: the one place that talks to the Claude Agent SDK.
@@ -50,8 +51,14 @@ export interface WorkerPrompt {
   checkpointNote?: string;
 }
 
-function buildPrompt(prompt: WorkerPrompt): string {
-  const parts = [prompt.intent];
+function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
+  const parts: string[] = [];
+
+  if (briefing) {
+    parts.push(briefing);
+  }
+
+  parts.push(prompt.intent);
 
   if (prompt.ruledOut.length > 0) {
     parts.push(
@@ -206,7 +213,8 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
   };
 
   const startedAt = Date.now();
-  const q = query({ prompt: buildPrompt(args.prompt), options });
+  const briefing = renderBriefing(buildRepoBriefing(args.cwd));
+  const q = query({ prompt: buildPrompt(args.prompt, briefing), options });
 
   // Set once we decide to stop (stall or rate limit). After that we stop
   // re-running detection and stop re-interrupting, but we deliberately keep

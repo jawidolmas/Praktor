@@ -37,7 +37,7 @@ Options for "run" (and overrides for "do"):
   --title "<text>"           Short title (defaults to the intent, truncated)
   --base-ref <ref>           Base ref for the worktree (default: HEAD)
   --model <name>             Model alias or full id (default: claude-sonnet-5)
-  --effort <level>           low | medium | high | xhigh | max (default: high)
+  --effort <level>           low | medium | high | xhigh | max (default: medium)
   --max-attempts <n>         Checkpoint-and-respawn budget (default: 3)
   --max-turns <n>            Turn budget per attempt (default: 30)
   --max-wall-clock-min <n>   Wall-clock budget per attempt, minutes (default: 20)
