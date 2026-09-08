@@ -232,6 +232,12 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
       turns += 1;
       usage = toTokenUsage(msg.message.usage);
 
+      for (const block of msg.message.content) {
+        if (block.type === "text" && block.text.trim()) {
+          args.onEvent({ type: "run.message", text: block.text.trim() });
+        }
+      }
+
       const sample: TurnSample = {
         turn: turns,
         usage,

@@ -66,12 +66,14 @@ const RunTurn = z.object({
   contextFraction: z.number().min(0).max(1).optional(),
 });
 
-const RunToolCall = z.object({
-  type: z.literal("run.tool_call"),
-  tool: z.string(),
-  /** Truncated for the log; the full input lives in the transcript. */
-  summary: z.string().default(""),
-  targetPath: z.string().optional(),
+/** The assistant's own narration — a completed text content block, not a tool
+ *  call (those are covered by policy.evaluated) and not extended-thinking
+ *  (deliberately not surfaced: often long, and not meant for display). This is
+ *  what lets a terminal watching a run show what the worker is doing as it
+ *  happens, instead of staying silent until the whole attempt finishes. */
+const RunMessage = z.object({
+  type: z.literal("run.message"),
+  text: z.string(),
 });
 
 const RunToolResult = z.object({
@@ -193,7 +195,7 @@ export const EventPayloadSchema = z.discriminatedUnion("type", [
   TaskStatusChanged,
   RunStarted,
   RunTurn,
-  RunToolCall,
+  RunMessage,
   RunToolResult,
   RunFinished,
   StallDetected,

@@ -32,6 +32,7 @@ import {
   churn,
   commitAll,
   createWorktree,
+  formatLiveLine,
   removeWorktree,
   renderCheckpointNote,
   runAcceptance,
@@ -267,7 +268,11 @@ export async function runObjective(args: RunObjectiveArgs): Promise<void> {
         ...(checkpointNote !== undefined ? { checkpointNote } : {}),
       },
       policies: objectivePolicies,
-      onEvent: (payload) => appendEvent(db, { objectiveId, taskId, runId, payload }),
+      onEvent: (payload) => {
+        appendEvent(db, { objectiveId, taskId, runId, payload });
+        const line = formatLiveLine(payload);
+        if (line) console.log(line);
+      },
       supervisorCallbacks: {
         requestDecision: async (input) => {
           const decisionKeyValue = nextDecisionKey(db);
