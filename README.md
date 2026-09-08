@@ -1,6 +1,6 @@
-# exec-agent
+# Praktor
 
-A supervisor for Claude Code. You give it an objective in plain English; it opens an isolated
+A supervisor for Claude Code. Installs as the `exec-agent` command. You give it an objective in plain English; it opens an isolated
 git worktree, drives a Claude Code worker inside it, enforces a set of hard rules the worker
 cannot talk its way around, verifies the result by actually running a command rather than
 trusting the worker's own "done" — and hands you back a report and a branch to review.
@@ -42,8 +42,8 @@ multi-task decomposition, no daemon, and no Telegram bridge yet — `apps/daemon
 ## Install
 
 ```bash
-git clone https://github.com/<you>/exec-agent.git
-cd exec-agent
+git clone https://github.com/jawidolmas/Praktor.git
+cd Praktor
 npm install      # also builds the workspace packages (npm's "prepare" step)
 npm link         # makes `exec-agent` available globally
 ```
