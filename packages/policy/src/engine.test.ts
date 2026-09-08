@@ -50,7 +50,7 @@ describe("matching", () => {
     // The real bug: the single-pattern version required "push" immediately
     // after "git", so this — the worker's own idiomatic phrasing, seen live,
     // not a contrived edge case — sailed through as an unmatched, allowed call.
-    const real = 'git -C "C:/Users/USER/Desktop/takil-workspace" push origin main && git -C "C:/Users/USER/Desktop/takil-workspace" status';
+    const real = 'git -C "C:/Users/dev/Desktop/storefront" push origin main && git -C "C:/Users/dev/Desktop/storefront" status';
     expect(evaluate(seeded, bash(real)).action).toBe("deny");
   });
 

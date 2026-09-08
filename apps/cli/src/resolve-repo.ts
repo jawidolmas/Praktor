@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Turn "in takil-workspace" into an actual repo path.
+ * Turn "in my-project" into an actual repo path.
  *
  * This deliberately does not guess when it isn't sure: zero matches or more than
  * one both fail closed with the candidate list printed, rather than picking the
@@ -50,8 +50,8 @@ export function findGitRepos(): RepoCandidate[] {
 const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 /**
- * Locational-preposition mentions: "in takil-workspace", "for the takil-workspace
- * repo", "to takil-workspace". This is what actually distinguishes a sentence
+ * Locational-preposition mentions: "in my-project", "for the my-project
+ * repo", "to my-project". This is what actually distinguishes a sentence
  * naming its target repo from a repo's name showing up as an ordinary word
  * elsewhere in the request — this project is itself named "agent", and "agent"
  * is also just an English word, so "Hello, agent" as file content must not be
@@ -81,7 +81,7 @@ export interface ResolveRepoResult {
  * Two passes: first, only names explicitly called out with a locational
  * preposition — precise, and what real requests actually look like. Only if
  * that finds nothing does it fall back to a broad "the name appears anywhere in
- * the text" scan, for phrasings without a preposition (e.g. "takil-workspace:
+ * the text" scan, for phrasings without a preposition (e.g. "my-project:
  * add X") — looser, but better than refusing outright.
  */
 export function resolveRepoFromText(

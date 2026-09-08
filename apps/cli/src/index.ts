@@ -21,9 +21,9 @@ else falls back to a weak "something changed" check and says so). Flags can go
 anywhere — before the sentence, after it, or both. Override any of it with the
 same flags "run" takes.
 
-  exec-agent do "add test.md in takil-workspace"
+  exec-agent do "add test.md in my-project"
   exec-agent do --repo ../some/repo "add a CONTRIBUTING.md"
-  exec-agent do "refactor the auth module in takil-workspace" --check "tests=npm test"
+  exec-agent do "refactor the auth module in my-project" --check "tests=npm test"
 
 "run" is the explicit path — no inference, you state everything:
 
@@ -59,7 +59,7 @@ async function runDo(argv: string[]): Promise<void> {
   if (!sentence) {
     console.error(USAGE);
     console.error(
-      'error: "do" needs a sentence, e.g. exec-agent do "add test.md in takil-workspace"\n',
+      'error: "do" needs a sentence, e.g. exec-agent do "add test.md in my-project"\n',
     );
     process.exitCode = 1;
     return;

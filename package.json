@@ -3,25 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "An executive agent that supervises coding agents as a workforce",
+  "description": "An executive agent that supervises Claude Code as a workforce: give it an objective, get back verified work and a report.",
+  "license": "MIT",
+  "author": "Jawid Olmas",
   "bin": {
     "exec-agent": "./bin/exec-agent.mjs"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   },
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
+    "build": "tsc --build",
+    "prepare": "tsc --build",
     "typecheck": "tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate --config=packages/db/drizzle.config.ts",
     "db:migrate": "tsx packages/db/src/migrate.ts",
-    "exec": "tsx apps/cli/src/index.ts",
-    "daemon": "tsx apps/daemon/src/index.ts"
+    "exec": "tsx apps/cli/src/index.ts"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
