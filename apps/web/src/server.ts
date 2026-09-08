@@ -4,6 +4,7 @@ import { extname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Db } from "@exec/db";
 import {
+  answerOpenDecision,
   getObjective,
   getObjectiveEvents,
   listObjectives,
@@ -19,6 +20,36 @@ const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
 };
+
+/** Reads and parses a JSON request body, capped well above anything a
+ *  decision answer could plausibly need — this is the only endpoint that
+ *  accepts one, so there's no reason to pull in a body-parser dependency
+ *  for it. */
+function readJsonBody(req: IncomingMessage, maxBytes = 16 * 1024): Promise<unknown> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        req.destroy();
+        rejectPromise(new Error("request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8").trim();
+      if (!text) return resolvePromise({});
+      try {
+        resolvePromise(JSON.parse(text));
+      } catch {
+        rejectPromise(new Error("invalid JSON body"));
+      }
+    });
+    req.on("error", rejectPromise);
+  });
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -86,11 +117,26 @@ function streamObjectiveEvents(db: Db, req: IncomingMessage, res: ServerResponse
 }
 
 export function createDashboardServer(db: Db) {
-  return createServer((req, res) => {
+  return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
 
     try {
+      const answerMatch = path.match(/^\/api\/decisions\/([^/]+)\/answer$/);
+      if (req.method === "POST" && answerMatch?.[1]) {
+        const body = (await readJsonBody(req)) as { answer?: unknown; answeredBy?: unknown };
+        const answer = typeof body.answer === "string" ? body.answer : undefined;
+        const answeredBy =
+          typeof body.answeredBy === "string" && body.answeredBy.trim()
+            ? body.answeredBy.trim()
+            : "dashboard";
+        if (!answer) return sendJson(res, 400, { error: "answer is required" });
+        const applied = answerOpenDecision(db, { key: answerMatch[1], answer, answeredBy });
+        return applied
+          ? sendJson(res, 200, { ok: true })
+          : sendJson(res, 409, { ok: false, error: "already answered, or no such decision" });
+      }
+
       if (path === "/api/objectives") {
         return sendJson(res, 200, listObjectives(db));
       }

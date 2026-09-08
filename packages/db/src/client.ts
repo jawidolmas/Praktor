@@ -21,18 +21,26 @@ export interface OpenDbOptions {
 }
 
 /**
+ * The supervisor's home directory: the database, the daemon's pidfile and
+ * log, and (elsewhere) worktrees all anchor off this one path. Fixed by
+ * default rather than resolved against the invoking shell's cwd — this is
+ * meant to be one central place regardless of where `exec-agent` is run
+ * from, or which process (CLI, daemon, dashboard) is asking. Override
+ * EXEC_HOME to scope state to a single project instead.
+ */
+export function execHome(): string {
+  return process.env["EXEC_HOME"] ?? join(homedir(), ".exec-agent");
+}
+
+/**
  * Open the supervisor database.
  *
  * WAL is what makes the single-file choice work here: the daemon is the only
- * writer, while the CLI, the Telegram bridge and (later) the dashboard all read
+ * writer, while the CLI, the Telegram bridge and the dashboard all read
  * concurrently without blocking it.
  */
 export function openDb(options: OpenDbOptions = {}): ExecDbHandle {
-  // Fixed by default (not resolved against the invoking shell's cwd) — this is
-  // meant to be one central database regardless of where `exec-agent` is run
-  // from. Override EXEC_HOME to scope state to a single project instead.
-  const home = process.env["EXEC_HOME"] ?? join(homedir(), ".exec-agent");
-  const requested = options.path ?? `${home}/exec.db`;
+  const requested = options.path ?? `${execHome()}/exec.db`;
   // ":memory:" is passed through untouched so tests can run without touching disk.
   const path = requested === ":memory:" ? requested : resolve(requested);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });

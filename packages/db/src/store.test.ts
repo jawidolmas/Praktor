@@ -1,15 +1,19 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { newId } from "@exec/core";
 import { openDb, type Db } from "./client.js";
 import { runMigrations } from "./migrate.js";
 import { decisions, objectives, tasks } from "./schema.js";
 import {
+  activeObjectives,
   addRuledOut,
   answerDecision,
   appendEvent,
   nextDecisionKey,
   readEvents,
   readyTasks,
+  schedulableObjectives,
+  setObjectiveStatus,
   setTaskStatus,
 } from "./store.js";
 
@@ -142,6 +146,78 @@ describe("event log", () => {
     );
     expect(changes).toHaveLength(1);
     expect(changes[0]!.payload).toMatchObject({ from: "pending", to: "running", reason: "scheduled" });
+  });
+});
+
+describe("activeObjectives", () => {
+  it("returns only active objectives, oldest first", () => {
+    const done = newId();
+    db.insert(objectives)
+      .values({
+        id: done, title: "done objective", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "done", budget: BUDGET,
+        createdAt: Date.now() - 1000, updatedAt: Date.now(),
+      })
+      .run();
+    const olderActive = newId();
+    db.insert(objectives)
+      .values({
+        id: olderActive, title: "older active", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "active", budget: BUDGET,
+        createdAt: Date.now() - 2000, updatedAt: Date.now(),
+      })
+      .run();
+
+    expect(activeObjectives(db).map((o) => o.id)).toEqual([olderActive, objectiveId]);
+  });
+});
+
+describe("schedulableObjectives", () => {
+  it("includes blocked and parked objectives, but not draft, done, failed or cancelled", () => {
+    setObjectiveStatus(db, objectiveId, "blocked");
+
+    const parked = newId();
+    db.insert(objectives)
+      .values({
+        id: parked, title: "parked objective", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "parked", budget: BUDGET,
+        createdAt: Date.now(), updatedAt: Date.now(),
+      })
+      .run();
+    for (const status of ["draft", "done", "failed", "cancelled"]) {
+      db.insert(objectives)
+        .values({
+          id: newId(), title: status, brief: "", repoPath: "/tmp/repo",
+          baseRef: "HEAD", status, budget: BUDGET,
+          createdAt: Date.now(), updatedAt: Date.now(),
+        })
+        .run();
+    }
+
+    expect(schedulableObjectives(db).map((o) => o.id).sort()).toEqual([objectiveId, parked].sort());
+  });
+});
+
+describe("setObjectiveStatus", () => {
+  it("updates the row and records the transition as an event", () => {
+    setObjectiveStatus(db, objectiveId, "parked", "rate limited");
+
+    const row = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+    expect(row?.status).toBe("parked");
+
+    const changes = readEvents(db, { objectiveId }).filter(
+      (e) => e.type === "objective.status_changed",
+    );
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.payload).toMatchObject({ from: "active", to: "parked", reason: "rate limited" });
+  });
+
+  it("is a no-op when the status is unchanged", () => {
+    setObjectiveStatus(db, objectiveId, "active");
+    const changes = readEvents(db, { objectiveId }).filter(
+      (e) => e.type === "objective.status_changed",
+    );
+    expect(changes).toHaveLength(0);
   });
 });
 

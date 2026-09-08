@@ -71,19 +71,7 @@ function renderDecisions(decisions) {
     el.innerHTML = '<div class="empty">None yet.</div>';
     return;
   }
-  el.innerHTML = decisions
-    .map(
-      (d) => `
-    <div class="decision-card">
-      <div class="title">${escapeHtml(d.key)} — ${escapeHtml(d.title)} ${badge(d.status)}</div>
-      <div class="meta">
-        ${escapeHtml(d.level)} · risk ${escapeHtml(d.risk)} · recommends "${escapeHtml(d.recommendation)}"
-        ${d.status === "answered" ? ` · answered "${escapeHtml(d.answer)}" by ${escapeHtml(d.answeredBy)}` : " · answer in the terminal running this objective"}
-        · ${timeAgo(d.createdAt)}
-      </div>
-    </div>`,
-    )
-    .join("");
+  el.innerHTML = decisions.map((d) => renderDecisionCard(d)).join("");
 }
 
 async function refreshDetail() {
@@ -135,4 +123,5 @@ if (!objectiveId) {
   refreshDetail().catch((err) => console.error(err));
   setInterval(() => refreshDetail().catch((err) => console.error(err)), 2000);
   connectStream();
+  window.addEventListener("decision-answered", () => refreshDetail().catch((err) => console.error(err)));
 }

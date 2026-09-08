@@ -19,6 +19,7 @@ import {
   policies,
   runs,
   tasks,
+  type ObjectiveRow,
   type TaskRow,
 } from "./schema.js";
 
@@ -139,6 +140,66 @@ export function readyTasks(db: Db, objectiveId: string): TaskRow[] {
       (t.status === "pending" || t.status === "ready") &&
       t.dependsOn.every((d) => doneIds.has(d)),
   );
+}
+
+/** Objectives currently in progress (status exactly "active"), oldest first. */
+export function activeObjectives(db: Db): ObjectiveRow[] {
+  return db
+    .select()
+    .from(objectives)
+    .where(eq(objectives.status, "active"))
+    .orderBy(asc(objectives.createdAt))
+    .all();
+}
+
+/**
+ * Objectives that might still have schedulable work, oldest first — broader
+ * than `activeObjectives`, and deliberately not just "active": an
+ * objective's own status can lag its task's (e.g. a decision answered by a
+ * CLI or the dashboard while the daemon was stopped updates the task but not
+ * the objective — see `answerDecision`), and the daemon must still find that
+ * work on its next tick rather than treating a "blocked"/"parked" objective
+ * as permanently off its list. `readyTasks` is the real gate on whether
+ * there's anything to do; this only avoids scanning finished objectives.
+ */
+export function schedulableObjectives(db: Db): ObjectiveRow[] {
+  return db
+    .select()
+    .from(objectives)
+    .where(
+      or(
+        eq(objectives.status, "active"),
+        eq(objectives.status, "blocked"),
+        eq(objectives.status, "parked"),
+      ),
+    )
+    .orderBy(asc(objectives.createdAt))
+    .all();
+}
+
+export function setObjectiveStatus(
+  db: Db,
+  objectiveId: string,
+  status: string,
+  reason?: string,
+): void {
+  const before = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+  if (!before || before.status === status) return;
+
+  db.update(objectives)
+    .set({ status, updatedAt: Date.now() })
+    .where(eq(objectives.id, objectiveId))
+    .run();
+
+  appendEvent(db, {
+    objectiveId,
+    payload: {
+      type: "objective.status_changed",
+      from: before.status,
+      to: status,
+      ...(reason === undefined ? {} : { reason }),
+    },
+  });
 }
 
 export function setTaskStatus(

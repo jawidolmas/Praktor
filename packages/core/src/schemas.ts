@@ -97,6 +97,9 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
  * Task class drives budget defaults and the tool surface a worker is granted.
  * An investigate task, for instance, gets read-only tools.
  */
+export const EffortLevel = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type EffortLevel = z.infer<typeof EffortLevel>;
+
 export const TaskClass = z.enum([
   "investigate",
   "implement",
@@ -121,6 +124,11 @@ export const TaskSchema = z.object({
   attempts: z.number().int().nonnegative().default(0),
   maxAttempts: z.number().int().positive().default(3),
   budget: BudgetSchema,
+  /** How to run the worker. Stored on the task (not just the run) because the
+   *  daemon picks a task up and drives it from the database alone, with no
+   *  in-memory args left over from whoever submitted it. */
+  model: z.string(),
+  effort: EffortLevel.default("medium"),
   /** Approaches ruled out by earlier attempts; seeded into every respawn. */
   ruledOut: z.array(z.string()).default([]),
   createdAt: z.number().int(),
@@ -144,9 +152,6 @@ export const RunExitReason = z.enum([
   "killed",
 ]);
 export type RunExitReason = z.infer<typeof RunExitReason>;
-
-export const EffortLevel = z.enum(["low", "medium", "high", "xhigh", "max"]);
-export type EffortLevel = z.infer<typeof EffortLevel>;
 
 export const RunSchema = z.object({
   id: z.string(),

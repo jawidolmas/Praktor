@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import {
+  answerDecision,
   decisions,
   events,
   objectives,
@@ -12,11 +13,13 @@ import {
 import { describeEvent } from "./format.js";
 
 /**
- * Read-only data access for the dashboard. Every function here only ever
- * selects — the CLI process is the sole writer (enforced by convention, not
- * by a DB permission, same as the "one objective at a time" design today),
- * and SQLite's WAL mode is exactly what lets this read concurrently with a
- * run in progress without blocking it.
+ * Data access for the dashboard. Almost every function here only ever
+ * selects — the daemon is the sole process actually driving work, and
+ * SQLite's WAL mode is what lets this read concurrently with it without
+ * blocking it. `answerOpenDecision` is the one write: answering a decision
+ * is safe for any process to do (the daemon only polls for the answer, it
+ * doesn't own the decision), which is exactly what makes it possible to
+ * answer one from here instead of only from the terminal that submitted it.
  */
 
 export interface ObjectiveSummary {
@@ -125,6 +128,8 @@ export function listOpenDecisions(db: Db) {
       key: decisions.key,
       objectiveId: decisions.objectiveId,
       title: decisions.title,
+      context: decisions.context,
+      options: decisions.options,
       level: decisions.level,
       risk: decisions.risk,
       recommendation: decisions.recommendation,
@@ -140,4 +145,14 @@ export function listOpenDecisions(db: Db) {
 
 export function listPolicies(db: Db) {
   return db.select().from(policies).orderBy(policies.key).all();
+}
+
+/** Answer an open decision from the dashboard. Returns false if it was
+ *  already answered elsewhere (another tab, the CLI, `exec-agent decide`) or
+ *  the key doesn't exist — never overwrites an existing answer. */
+export function answerOpenDecision(
+  db: Db,
+  args: { key: string; answer: string; answeredBy: string },
+): boolean {
+  return answerDecision(db, args);
 }

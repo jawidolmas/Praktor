@@ -6,6 +6,7 @@
     { "path": "./packages/policy" },
     { "path": "./packages/worker" },
     { "path": "./apps/cli" },
-    { "path": "./apps/web" }
+    { "path": "./apps/web" },
+    { "path": "./apps/daemon" }
   ]
 }

@@ -59,6 +59,11 @@ export const tasks = sqliteTable(
     attempts: integer("attempts").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull().default(3),
     budget: text("budget", { mode: "json" }).$type<Budget>().notNull(),
+    // How to run the worker, persisted here (not just on `runs`) so the daemon
+    // can pick this task up and drive every attempt from the database alone —
+    // there is no CLI process left holding these in memory by then.
+    model: text("model").notNull().default("claude-sonnet-5"),
+    effort: text("effort").notNull().default("medium"),
     ruledOut: text("ruled_out", { mode: "json" })
       .$type<string[]>()
       .notNull()

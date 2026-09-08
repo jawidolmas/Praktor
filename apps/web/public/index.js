@@ -30,19 +30,7 @@ function renderDecisions(rows) {
     el.innerHTML = '<div class="empty">Nothing open.</div>';
     return;
   }
-  el.innerHTML = rows
-    .map(
-      (d) => `
-    <div class="decision-card">
-      <div class="title">${escapeHtml(d.key)} — ${escapeHtml(d.title)}</div>
-      <div class="meta">
-        ${escapeHtml(d.level)} · risk ${escapeHtml(d.risk)} · recommends "${escapeHtml(d.recommendation)}" ·
-        <a href="/objective.html?id=${encodeURIComponent(d.objectiveId)}">${escapeHtml(d.objectiveTitle ?? d.objectiveId)}</a>
-        · ${timeAgo(d.createdAt)}
-      </div>
-    </div>`,
-    )
-    .join("");
+  el.innerHTML = rows.map((d) => renderDecisionCard(d, { showObjectiveLink: true })).join("");
 }
 
 function renderPolicies(rows) {
@@ -91,3 +79,4 @@ tickClock();
 setInterval(tickClock, 1000);
 refresh().catch((err) => console.error(err));
 setInterval(() => refresh().catch((err) => console.error(err)), 3000);
+window.addEventListener("decision-answered", () => refresh().catch((err) => console.error(err)));

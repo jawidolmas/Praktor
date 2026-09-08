@@ -1,5 +1,5 @@
 import { openDb, readEvents, runMigrations } from "@exec/db";
-import { reconcileSeedPolicies } from "./run.js";
+import { reconcileSeedPolicies } from "@exec/policy";
 
 /** Dump the durable event log for an objective — the "come back to a report,
  *  not a transcript" promise, at its most literal: every decision this system

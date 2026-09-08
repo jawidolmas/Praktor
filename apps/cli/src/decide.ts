@@ -2,12 +2,12 @@ import { createInterface } from "node:readline/promises";
 import type { RequestDecisionInput } from "@exec/core";
 
 /**
- * The terminal decision surface.
- *
- * This is a stand-in for the Telegram bridge (V0.1 in the plan): when a worker
- * calls `request_decision`, the tool call genuinely blocks until this resolves, so
- * running the CLI in a terminal you're watching is a real, working escalation
- * path today — not a stub.
+ * The terminal decision surface — one of several now. The daemon (not this
+ * process) actually blocks the worker's tool call, polling the database for
+ * an answer, so this is just the fastest path when you happen to still be
+ * watching: `exec-agent decide` and the dashboard answer the same row from
+ * anywhere else. This is a stand-in for the Telegram bridge (V0.1 in the
+ * plan) as the "you happen to be right here" case specifically.
  */
 export async function askInTerminal(
   input: RequestDecisionInput,

@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 import type { AcceptanceCheck } from "@exec/core";
+import { answerDecision, openDb, runMigrations } from "@exec/db";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
+import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.js";
 import { printEvents } from "./events.js";
 import { inferCheck } from "./infer.js";
 import { resolveRepoFromText } from "./resolve-repo.js";
-import { runObjective } from "./run.js";
+import { submitAndWatch, tailObjective } from "./run.js";
 
 const USAGE = `
 exec-agent — supervise a single Claude Code worker on one task, end to end.
 
   exec-agent do "<what to do, in plain English>" [options]
   exec-agent run --repo <path> --intent "<what to do>" --check "<label>=<command>" [options]
+  exec-agent watch <objective-id>
   exec-agent events <objective-id>
+  exec-agent decide <decision-key> <option-id> [--by "<name>"]
+  exec-agent daemon start|stop|status
 
 "do" is the quick path: say what you want, name the repo somewhere in the
 sentence (it's matched against git repos under ~/Desktop — set
@@ -24,6 +29,11 @@ same flags "run" takes.
   exec-agent do "add test.md in my-project"
   exec-agent do --repo ../some/repo "add a CONTRIBUTING.md"
   exec-agent do "refactor the auth module in my-project" --check "tests=npm test"
+
+Both "do" and "run" submit the objective to the supervisor daemon (starting
+one if none is running yet) and then watch it happen — the same live output
+as before. Ctrl-C stops watching, not the objective: it keeps running in the
+daemon regardless, and you can reattach any time with "watch".
 
 "run" is the explicit path — no inference, you state everything:
 
@@ -41,6 +51,16 @@ Options for "run" (and overrides for "do"):
   --max-attempts <n>         Checkpoint-and-respawn budget (default: 3)
   --max-turns <n>            Turn budget per attempt (default: 30)
   --max-wall-clock-min <n>   Wall-clock budget per attempt, minutes (default: 20)
+
+"daemon start" launches the supervisor as a detached background process (it
+survives this terminal closing); "do"/"run" also do this automatically, so
+you rarely need it directly. "daemon stop" asks it to exit — any task it was
+mid-attempt on resumes from its last completed attempt next time a daemon
+starts. "daemon status" reports whether one is running and its pid.
+
+"decide" answers an open decision from any terminal, not necessarily the one
+watching the objective — useful once you've walked away. The dashboard can
+also answer decisions. Omitting --by records "cli-operator".
 
 Example:
   exec-agent run \\
@@ -114,7 +134,7 @@ async function runDo(argv: string[]): Promise<void> {
   const title = flags.get("title")?.[0] ?? sentence.slice(0, 72);
   const opts = readRunOptions(flags);
 
-  await runObjective({
+  await submitAndWatch({
     repoPath,
     baseRef: opts.baseRef,
     title,
@@ -144,7 +164,7 @@ async function runRun(argv: string[]): Promise<void> {
   const title = flags.get("title")?.[0] ?? intent.slice(0, 72);
   const opts = readRunOptions(flags);
 
-  await runObjective({
+  await submitAndWatch({
     repoPath,
     baseRef: opts.baseRef,
     title,
@@ -156,6 +176,73 @@ async function runRun(argv: string[]): Promise<void> {
     maxTurns: opts.maxTurns,
     maxWallClockMs: opts.maxWallClockMs,
   });
+}
+
+async function runWatch(argv: string[]): Promise<void> {
+  const objectiveId = argv[0];
+  if (!objectiveId) {
+    console.error("usage: exec-agent watch <objective-id>");
+    process.exitCode = 1;
+    return;
+  }
+  const { db } = openDb();
+  runMigrations(db);
+  const daemon = await ensureDaemonRunning();
+  if (daemon.started) {
+    console.log(`Started the supervisor daemon (pid ${daemon.pid}) — nothing was progressing until now.`);
+  }
+  await tailObjective(db, objectiveId);
+}
+
+async function runDecide(argv: string[]): Promise<void> {
+  const { flags, positional } = parseArgs(argv);
+  const key = positional[0];
+  const answer = positional[1];
+  if (!key || !answer) {
+    console.error('usage: exec-agent decide <decision-key> <option-id> [--by "<name>"]');
+    process.exitCode = 1;
+    return;
+  }
+  const answeredBy = flags.get("by")?.[0] ?? "cli-operator";
+
+  const { db } = openDb();
+  runMigrations(db);
+  const applied = answerDecision(db, { key, answer, answeredBy });
+  if (!applied) {
+    console.error(`${key} is not an open decision (already answered, or no such key).`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`${key} answered "${answer}" by ${answeredBy}.`);
+}
+
+async function runDaemon(argv: string[]): Promise<void> {
+  const sub = argv[0];
+  if (sub === "start") {
+    const result = await ensureDaemonRunning();
+    console.log(
+      result.started
+        ? `Started the supervisor daemon (pid ${result.pid}).`
+        : `Already running (pid ${result.pid}).`,
+    );
+    return;
+  }
+  if (sub === "stop") {
+    const result = stopDaemon();
+    console.log(
+      result.stopped
+        ? `Sent stop signal to the supervisor daemon (pid ${result.pid}).`
+        : "No daemon is running.",
+    );
+    return;
+  }
+  if (sub === "status") {
+    const status = daemonStatus();
+    console.log(status.running ? `Running (pid ${status.pid}).` : "Not running.");
+    return;
+  }
+  console.error("usage: exec-agent daemon start|stop|status");
+  process.exitCode = 1;
 }
 
 async function main(): Promise<void> {
@@ -179,6 +266,21 @@ async function main(): Promise<void> {
 
   if (command === "run") {
     await runRun(rest);
+    return;
+  }
+
+  if (command === "watch") {
+    await runWatch(rest);
+    return;
+  }
+
+  if (command === "decide") {
+    await runDecide(rest);
+    return;
+  }
+
+  if (command === "daemon") {
+    await runDaemon(rest);
     return;
   }
 

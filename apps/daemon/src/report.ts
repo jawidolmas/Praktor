@@ -7,7 +7,9 @@ import type { VerifyOutcome } from "@exec/worker";
  * Deterministic and template-based, not LLM-generated — the `report` brain call
  * site from the plan turns this into prose later, but the content here (what
  * happened, what passed, what it cost) is already the substance of "you come back
- * to a report, not a transcript."
+ * to a report, not a transcript." Built by the daemon and stored as an artifact;
+ * the CLI's `watch`/tail just prints back whatever is stored, since by the time an
+ * objective finishes, the process that submitted it may be long gone.
  */
 
 export interface AttemptSummary {

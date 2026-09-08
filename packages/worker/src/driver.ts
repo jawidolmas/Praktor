@@ -164,7 +164,27 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
     },
   });
 
-  const supervisorServer = createSupervisorTools(args.supervisorCallbacks);
+  // A decision can now take an arbitrary amount of real time to answer — the
+  // whole point of routing it through the database instead of a blocking
+  // terminal prompt is that a person can check back in an hour, not seconds.
+  // That wait must not count against this attempt's wall-clock budget, or
+  // "go to chill and answer later" would reliably burn the budget and trigger
+  // a pointless checkpoint-and-respawn purely because someone took their time
+  // — the one thing this design is supposed to make safe to do.
+  let decisionWaitMs = 0;
+  const timedCallbacks: SupervisorToolCallbacks = {
+    ...args.supervisorCallbacks,
+    requestDecision: async (input) => {
+      const waitStarted = Date.now();
+      try {
+        return await args.supervisorCallbacks.requestDecision(input);
+      } finally {
+        decisionWaitMs += Date.now() - waitStarted;
+      }
+    },
+  };
+
+  const supervisorServer = createSupervisorTools(timedCallbacks);
   const abortController = new AbortController();
 
   const options: Options = {
@@ -258,7 +278,7 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
 
       if (stopping) continue;
 
-      const wallClockMs = Date.now() - startedAt;
+      const wallClockMs = Date.now() - startedAt - decisionWaitMs;
       const stall =
         wallClockMs > args.budget.maxWallClockMs
           ? {

@@ -31,7 +31,8 @@
     "db:generate": "drizzle-kit generate --config=packages/db/drizzle.config.ts",
     "db:migrate": "tsx packages/db/src/migrate.ts",
     "exec": "tsx apps/cli/src/index.ts",
-    "dashboard": "tsx apps/web/src/index.ts"
+    "dashboard": "tsx apps/web/src/index.ts",
+    "daemon": "tsx apps/daemon/src/index.ts"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
