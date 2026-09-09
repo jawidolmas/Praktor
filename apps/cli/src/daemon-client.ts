@@ -28,6 +28,14 @@ function spawnDaemon(): void {
   const child = spawn(process.execPath, [tsxCli, daemonEntry], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
+    // Without this, Windows pops up a visible console window for the
+    // daemon — found live: a person who didn't spawn it themselves has no
+    // reason to expect that window and every reason to close what looks
+    // like a stray popup, which kills the daemon (Windows' console close
+    // isn't a signal Node reliably catches as a graceful shutdown, so it
+    // dies with no log line at all). `windowsHide` is a no-op on other
+    // platforms, so this is safe to always pass.
+    windowsHide: true,
   });
   child.unref();
 }
