@@ -305,7 +305,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
 
     let verify: VerifyOutcome | undefined;
     if (result.exitReason === "completed") {
-      verify = runAcceptance(worktree.path, task.acceptance);
+      verify = runAcceptance(worktree.path, task.acceptance, { EXEC_BASE_SHA: worktree.baseSha });
       for (const check of verify.checks) {
         appendEvent(db, {
           objectiveId: objective.id,

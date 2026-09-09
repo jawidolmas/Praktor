@@ -26,7 +26,7 @@ export interface VerifyOutcome {
   checks: CheckOutcome[];
 }
 
-function runCheck(cwd: string, check: AcceptanceCheck): CheckOutcome {
+function runCheck(cwd: string, check: AcceptanceCheck, extraEnv?: Record<string, string>): CheckOutcome {
   const startedAt = Date.now();
   const res = spawnSync(check.command, {
     cwd,
@@ -34,6 +34,7 @@ function runCheck(cwd: string, check: AcceptanceCheck): CheckOutcome {
     timeout: check.timeoutMs,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
+    ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
   });
   const durationMs = Date.now() - startedAt;
   const stdout = res.stdout ?? "";
@@ -68,8 +69,15 @@ function runCheck(cwd: string, check: AcceptanceCheck): CheckOutcome {
 
 /** Run every acceptance check for a task in order, stopping at the first available
  *  answer for each — all checks always run, so a report shows the complete picture
- *  rather than just the first failure. */
-export function runAcceptance(cwd: string, spec: AcceptanceSpec): VerifyOutcome {
-  const checks = spec.checks.map((check) => runCheck(cwd, check));
+ *  rather than just the first failure. `extraEnv` is how the caller hands a check
+ *  command context it has no other way to reach — e.g. the attempt's base commit,
+ *  which lets the generic "something changed" check tell a real commit-and-push
+ *  apart from nothing having happened, something a plain dirty-tree check can't. */
+export function runAcceptance(
+  cwd: string,
+  spec: AcceptanceSpec,
+  extraEnv?: Record<string, string>,
+): VerifyOutcome {
+  const checks = spec.checks.map((check) => runCheck(cwd, check, extraEnv));
   return { passed: checks.every((c) => c.passed), checks };
 }

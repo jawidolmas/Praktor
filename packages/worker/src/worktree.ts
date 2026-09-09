@@ -14,6 +14,12 @@ export interface WorktreeHandle {
   repoPath: string;
   path: string;
   branch: string;
+  /** The commit the attempt's branch started from, captured right after
+   *  creation, before the worker can have touched anything. This is what
+   *  lets an acceptance check tell "the worker committed and even pushed
+   *  its own branch" apart from "nothing happened" — a plain working-tree
+   *  dirty check can't, since a clean commit-and-push leaves nothing dirty. */
+  baseSha: string;
 }
 
 function git(repoPath: string, args: string[]): string {
@@ -41,7 +47,14 @@ export function createWorktree(args: CreateWorktreeArgs): WorktreeHandle {
     args.worktreePath,
     args.baseRef,
   ]);
-  return { repoPath: args.repoPath, path: args.worktreePath, branch: args.branch };
+  // Resolved from inside the new worktree, not the source repo: `baseRef` is
+  // often the literal string "HEAD", which means something different in every
+  // worktree that evaluates it. At this exact moment — right after creation,
+  // before the worker's first tool call — the new worktree's HEAD *is* the
+  // base commit, so this is the one point where reading it here gives the
+  // real answer.
+  const baseSha = git(args.worktreePath, ["rev-parse", "HEAD"]);
+  return { repoPath: args.repoPath, path: args.worktreePath, branch: args.branch, baseSha };
 }
 
 /**
