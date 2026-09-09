@@ -14,7 +14,8 @@ import {
   type Db,
 } from "@exec/db";
 import { reconcileSeedPolicies } from "@exec/policy";
-import { driveTask } from "./engine.js";
+import { attemptBranchName, removeWorktree } from "@exec/worker";
+import { driveTask, worktreePathFor } from "./engine.js";
 
 /**
  * The daemon: the persistent process that actually drives objectives, so
@@ -40,6 +41,15 @@ function sleep(ms: number): Promise<void> {
  * awaiting an answer, valid independent of whether the daemon is up, and
  * `answerDecision` (called from the CLI or the dashboard, neither of which
  * needs the daemon running) already makes it schedulable again on its own.
+ *
+ * The retry reuses the exact same attempt number and worktree/branch the
+ * crashed daemon was using (an attempt only counts once it concludes — see
+ * engine.ts), so if that worktree is still sitting on disk, `git worktree
+ * add` for the retry collides with it ("already used by worktree at ...").
+ * Found live: a daemon that died mid-attempt left exactly this behind, and
+ * the very next restart failed the same way trying to recreate it. Cleaning
+ * up first — safe even when there is nothing to clean up — is what makes a
+ * restart actually resume instead of failing the same way again.
  */
 function recoverOrphans(db: Db): void {
   const orphaned = db
@@ -49,13 +59,26 @@ function recoverOrphans(db: Db): void {
     .filter((t) => t.status === "running" || t.status === "parked");
   if (orphaned.length === 0) return;
 
+  const allObjectives = db.select().from(objectives).all();
+  const objectiveById = new Map(allObjectives.map((o) => [o.id, o] as const));
+
   for (const task of orphaned) {
+    const objective = objectiveById.get(task.objectiveId);
+    if (objective) {
+      const attempt = task.attempts + 1;
+      removeWorktree({
+        repoPath: objective.repoPath,
+        path: worktreePathFor(task.id, attempt),
+        branch: attemptBranchName(task.id, attempt),
+        baseSha: "",
+      });
+    }
     setTaskStatus(db, task.id, "ready", "recovered after daemon restart");
   }
 
   const objectiveIds = new Set(orphaned.map((t) => t.objectiveId));
   const TERMINAL = new Set(["done", "failed", "cancelled"]);
-  for (const objective of db.select().from(objectives).all()) {
+  for (const objective of allObjectives) {
     if (objectiveIds.has(objective.id) && !TERMINAL.has(objective.status)) {
       setObjectiveStatus(db, objective.id, "active", "recovered after daemon restart");
     }

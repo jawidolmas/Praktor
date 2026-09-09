@@ -83,7 +83,10 @@ async function waitForDecision(db: Db, key: string): Promise<{ answer: string; a
   }
 }
 
-function worktreePathFor(taskId: string, attempt: number): string {
+/** Exported so crash recovery (index.ts) can find and clean up a stale
+ *  worktree left behind by a killed attempt, using the exact same path a
+ *  retry will compute — one convention, not two that could drift apart. */
+export function worktreePathFor(taskId: string, attempt: number): string {
   return resolve(
     process.env["EXEC_WORKTREES_DIR"] ?? join(homedir(), ".exec-agent", "worktrees"),
     `${taskId}-${attempt}`,
