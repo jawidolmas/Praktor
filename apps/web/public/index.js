@@ -24,7 +24,16 @@ function renderObjectives(rows) {
     </table>`;
 }
 
+// This panel polls every few seconds; rebuilding it unconditionally would
+// wipe out an in-progress "answered by" field the moment someone started
+// typing into it. Only touch the DOM when the open decisions actually changed.
+let lastDecisionsKey;
+
 function renderDecisions(rows) {
+  const key = JSON.stringify(rows);
+  if (key === lastDecisionsKey) return;
+  lastDecisionsKey = key;
+
   const el = document.getElementById("decisions");
   if (rows.length === 0) {
     el.innerHTML = '<div class="empty">Nothing open.</div>';

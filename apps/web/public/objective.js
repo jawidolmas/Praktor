@@ -65,7 +65,16 @@ function renderTasks(tasks, runs) {
     .join("");
 }
 
+// Same reasoning as renderApproval's guard below: an unconditional re-render
+// on every poll would wipe out an in-progress "answered by" field the moment
+// someone started typing into it.
+let lastDecisionsKey;
+
 function renderDecisions(decisions) {
+  const key = JSON.stringify(decisions);
+  if (key === lastDecisionsKey) return;
+  lastDecisionsKey = key;
+
   const el = document.getElementById("decisions");
   if (decisions.length === 0) {
     el.innerHTML = '<div class="empty">None yet.</div>';
@@ -91,17 +100,34 @@ function renderDiff(diff) {
 async function mergeApproved() {
   const btn = document.getElementById("mergeBtn");
   const byInput = document.getElementById("approvedBy");
+  const approvedBy = (byInput && byInput.value.trim()) || "dashboard";
   btn.disabled = true;
   btn.textContent = "Merging…";
-  const { ok, data } = await postJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/approve`, {
-    approvedBy: (byInput && byInput.value.trim()) || "dashboard",
-  });
-  if (!ok) alert(data.message || "Merge failed.");
+  const { ok, data } = await postJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/approve`, { approvedBy });
+  if (!ok) {
+    alert(data.message || "Merge failed.");
+    // A failed merge (e.g. a dirty repo) leaves eligibility unchanged, so the
+    // guard below will skip re-rendering the panel — reset the button by hand
+    // or it would be stuck saying "Merging…" with no way to retry.
+    btn.disabled = false;
+    btn.textContent = "Merge into real repo & push";
+  }
   await refreshApproval();
   await refreshDetail();
 }
 
+// The dashboard polls every couple seconds; naively rebuilding this panel's
+// innerHTML on every poll would wipe out the "approved by" field mid-keystroke
+// (and any focus/selection in it) even though nothing about the underlying
+// diff actually changed. Only re-render when the fetched status is genuinely
+// different from what's already on screen.
+let lastApprovalKey;
+
 function renderApproval(status) {
+  const key = JSON.stringify(status);
+  if (key === lastApprovalKey) return;
+  lastApprovalKey = key;
+
   const panel = document.getElementById("approvalPanel");
   const el = document.getElementById("approval");
 
