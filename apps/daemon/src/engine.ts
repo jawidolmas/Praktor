@@ -19,6 +19,7 @@ import {
   type TaskRow,
 } from "@exec/db";
 import {
+  attemptBranchName,
   buildCheckpoint,
   churn,
   commitAll,
@@ -109,7 +110,7 @@ async function runAttempt(
   ruledOut: string[],
   initialNote: string | undefined,
 ): Promise<AttemptOutcome> {
-  const branch = `exec/${task.id.slice(0, 8)}-attempt-${attempt}`;
+  const branch = attemptBranchName(task.id, attempt);
   const worktreePath = worktreePathFor(task.id, attempt);
   const worktree = createWorktree({
     repoPath: objective.repoPath,

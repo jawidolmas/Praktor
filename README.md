@@ -34,6 +34,9 @@ bridge yet — `apps/telegram` is a reserved directory for that, not built out. 
 - Decisions raised by a worker (`request_decision`) can be answered from wherever you actually
   are: the terminal watching it (same prompt as always), `exec-agent decide <key> <option>` from
   any other terminal, or a button in the dashboard.
+- A human review checkpoint (`exec-agent approve <objective-id>`, or the dashboard's diff view and
+  Merge button): a worker's accepted work always lands on its own branch, never merged
+  automatically — this is what actually gets it into your real repo, once you've looked.
 - A full event log per objective (`exec-agent events <id>`) as the source of truth — never just
   the last thing printed to the terminal.
 
@@ -93,7 +96,15 @@ exec-agent events <objective-id>   # full event log for that run
 ```
 
 Every run prints its objective id and the git branch (`exec/<id>-attempt-N`) the work landed on.
-Nothing is ever merged automatically — review the branch and merge it yourself.
+**Nothing is ever merged automatically** — a worker's accepted work sits on its own branch until
+you review and approve it:
+
+```bash
+exec-agent approve <objective-id>    # shows the diff; on "y", merges into your repo's real
+                                      # branch and pushes it
+```
+
+(The dashboard has the same thing as a diff view with a Merge button.)
 
 `do` and `run` both submit the objective to the supervisor daemon and then watch it live — same
 output as always. **Ctrl-C stops watching, not the objective**: it keeps running in the daemon
@@ -138,7 +149,9 @@ SSE stream, so you can watch a run happen from a browser instead of a terminal).
 decisions can be answered right from a card here — each option's pros and cons are shown, same as
 the terminal prompt — which lands the same `answerDecision` write the CLI's `decide` command
 makes; SQLite's WAL mode is what lets this, the CLI, and the daemon all touch the database
-concurrently without blocking each other.
+concurrently without blocking each other. Once an objective is done, its "Review & approve" panel
+shows the real diff against your repo, colored like a normal diff view — the Merge button behind
+it runs the same merge-and-push `exec-agent approve` does, gated on you clicking it.
 
 ## Configuration
 

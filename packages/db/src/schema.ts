@@ -33,6 +33,11 @@ export const objectives = sqliteTable("objectives", {
   baseRef: text("base_ref").notNull().default("HEAD"),
   status: text("status").notNull().default("draft"),
   budget: text("budget", { mode: "json" }).$type<Budget>().notNull(),
+  // Set once a human has reviewed the diff and merged it into the real repo
+  // via `exec-agent approve` or the dashboard's Merge button. Distinct from
+  // `status: "done"`, which only means the worker's own acceptance check
+  // passed — a worker never merges its own work into your real branch.
+  mergedAt: integer("merged_at"),
   createdAt: integer("created_at").notNull().default(now),
   updatedAt: integer("updated_at").notNull().default(now),
 });

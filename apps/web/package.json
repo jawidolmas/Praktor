@@ -6,6 +6,7 @@
   "dependencies": {
     "@exec/core": "*",
     "@exec/db": "*",
+    "@exec/worker": "*",
     "drizzle-orm": "^0.45.2"
   }
 }

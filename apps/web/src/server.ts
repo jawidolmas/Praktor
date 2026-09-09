@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import type { Db } from "@exec/db";
 import {
   answerOpenDecision,
+  approveObjective,
+  getApprovalStatus,
   getObjective,
   getObjectiveEvents,
   listObjectives,
@@ -157,6 +159,24 @@ export function createDashboardServer(db: Db) {
       if (streamMatch?.[1]) {
         streamObjectiveEvents(db, req, res, streamMatch[1]);
         return;
+      }
+
+      const approvalMatch = path.match(/^\/api\/objectives\/([^/]+)\/approval$/);
+      if (approvalMatch?.[1]) {
+        return sendJson(res, 200, getApprovalStatus(db, approvalMatch[1]));
+      }
+
+      const approveMatch = path.match(/^\/api\/objectives\/([^/]+)\/approve$/);
+      if (req.method === "POST" && approveMatch?.[1]) {
+        const body = (await readJsonBody(req)) as { approvedBy?: unknown };
+        const approvedBy =
+          typeof body.approvedBy === "string" && body.approvedBy.trim() ? body.approvedBy.trim() : "dashboard";
+        // Merging and pushing shells out to git synchronously and can take a
+        // real moment (a push crosses the network) — acceptable for a
+        // single-operator local tool, same tradeoff better-sqlite3 already
+        // makes everywhere else in this server.
+        const result = approveObjective(db, approveMatch[1], approvedBy);
+        return sendJson(res, result.ok ? 200 : 409, result);
       }
 
       if (path === "/api/decisions") {

@@ -390,5 +390,49 @@ export function latestCheckpoint(db: Db, taskId: string) {
     .get();
 }
 
+/* ------------------------------------------------------------------ *
+ * Approval — the human review checkpoint before anything reaches the real repo
+ * ------------------------------------------------------------------ */
+
+export interface AcceptedRun {
+  taskId: string;
+  attempt: number;
+  repoPath: string;
+  baseRef: string;
+}
+
+/**
+ * The run whose branch actually holds the accepted work for an objective —
+ * only meaningful once its task is "done" (verify passed), since that's the
+ * one state where exactly one run is known to have succeeded. Only v0.1's
+ * one-task-per-objective shape is assumed here; a real DAG would need to
+ * pick a specific task, not "the" task.
+ */
+export function acceptedRun(db: Db, objectiveId: string): AcceptedRun | undefined {
+  const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+  if (!objective || objective.status !== "done") return undefined;
+
+  const task = db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).get();
+  if (!task) return undefined;
+
+  const run = db
+    .select()
+    .from(runs)
+    .where(eq(runs.taskId, task.id))
+    .orderBy(desc(runs.attempt))
+    .limit(1)
+    .get();
+  if (!run) return undefined;
+
+  return { taskId: task.id, attempt: run.attempt, repoPath: objective.repoPath, baseRef: objective.baseRef };
+}
+
+export function markObjectiveMerged(db: Db, objectiveId: string): void {
+  db.update(objectives)
+    .set({ mergedAt: Date.now(), updatedAt: Date.now() })
+    .where(eq(objectives.id, objectiveId))
+    .run();
+}
+
 export { objectives, tasks, runs, events, decisions, policies, memories, artifacts };
 export { isNull };

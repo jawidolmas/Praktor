@@ -22,10 +22,20 @@ export interface WorktreeHandle {
   baseSha: string;
 }
 
-function git(repoPath: string, args: string[]): string {
+/** Exported for reuse by anything else that needs to run git against a
+ *  specific repo path (e.g. approve.ts, operating on the real repo rather
+ *  than a worktree) — one implementation of "run git with -C", not two. */
+export function git(repoPath: string, args: string[]): string {
   return execFileSync("git", ["-C", repoPath, ...args], {
     encoding: "utf8",
   }).trim();
+}
+
+/** The branch name convention for one attempt — a single source of truth so
+ *  the daemon (creating it) and the approve flow (finding it again later,
+ *  from the database alone) can never drift apart. */
+export function attemptBranchName(taskId: string, attempt: number): string {
+  return `exec/${taskId.slice(0, 8)}-attempt-${attempt}`;
 }
 
 export interface CreateWorktreeArgs {

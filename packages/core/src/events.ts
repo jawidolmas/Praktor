@@ -188,6 +188,17 @@ const Note = z.object({
   message: z.string(),
 });
 
+/** A human reviewed the diff and merged it into the real repo — the one
+ *  event type in this log written by a person's decision rather than by the
+ *  worker or the supervisor's own control flow. */
+const ObjectiveApproved = z.object({
+  type: z.literal("objective.approved"),
+  branch: z.string(),
+  baseRef: z.string(),
+  pushed: z.boolean(),
+  approvedBy: z.string(),
+});
+
 export const EventPayloadSchema = z.discriminatedUnion("type", [
   ObjectiveCreated,
   ObjectiveStatusChanged,
@@ -211,6 +222,7 @@ export const EventPayloadSchema = z.discriminatedUnion("type", [
   FindingRecorded,
   ProgressReported,
   Note,
+  ObjectiveApproved,
 ]);
 export type EventPayload = z.infer<typeof EventPayloadSchema>;
 export type EventType = EventPayload["type"];

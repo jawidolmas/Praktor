@@ -15,6 +15,13 @@
       "when": 1788868639633,
       "tag": "0001_confused_callisto",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788966261067,
+      "tag": "0002_gray_magneto",
+      "breakpoints": true
     }
   ]
 }

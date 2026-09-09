@@ -110,5 +110,11 @@ export function describeEvent(payload: EventPayload): EventDisplay {
 
     case "note":
       return { kind: "muted", text: payload.message };
+
+    case "objective.approved":
+      return {
+        kind: "success",
+        text: `Approved and merged ${payload.branch} into ${payload.baseRef} by ${payload.approvedBy}${payload.pushed ? " (pushed)" : " (local only — push failed or no remote)"}`,
+      };
   }
 }

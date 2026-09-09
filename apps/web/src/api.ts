@@ -1,8 +1,11 @@
 import { desc, eq } from "drizzle-orm";
 import {
+  acceptedRun,
   answerDecision,
+  appendEvent,
   decisions,
   events,
+  markObjectiveMerged,
   objectives,
   policies,
   readEvents,
@@ -10,6 +13,7 @@ import {
   tasks,
   type Db,
 } from "@exec/db";
+import { attemptBranchName, computeApprovalDiff, mergeAndPush } from "@exec/worker";
 import { describeEvent } from "./format.js";
 
 /**
@@ -155,4 +159,83 @@ export function answerOpenDecision(
   args: { key: string; answer: string; answeredBy: string },
 ): boolean {
   return answerDecision(db, args);
+}
+
+export interface ApprovalStatus {
+  /** True only when there's a real diff sitting there, unmerged, ready for a
+   *  human "yes" — the one case the dashboard shows a diff and a button for. */
+  eligible: boolean;
+  alreadyMerged: boolean;
+  mergedAt?: number;
+  reason?: string;
+  branch?: string;
+  repoPath?: string;
+  diff?: string;
+}
+
+/** What the "Review & Approve" panel needs: the diff to show, or a plain
+ *  reason there's nothing to approve yet (not done, no actual change) — or,
+ *  distinctly, confirmation that it's already been merged. Computing the
+ *  diff means running git against the user's real repo — read-only
+ *  (`git diff`), same trust level as everything else here, just pointed at
+ *  a different path than a worktree. */
+export function getApprovalStatus(db: Db, objectiveId: string): ApprovalStatus {
+  const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+  if (!objective) return { eligible: false, alreadyMerged: false, reason: "No such objective." };
+  if (objective.mergedAt) {
+    return { eligible: false, alreadyMerged: true, mergedAt: objective.mergedAt };
+  }
+
+  const accepted = acceptedRun(db, objectiveId);
+  if (!accepted) {
+    return {
+      eligible: false,
+      alreadyMerged: false,
+      reason: objective.status === "done" ? "No accepted run was found." : `Not done yet (status: ${objective.status}).`,
+    };
+  }
+
+  const branch = attemptBranchName(accepted.taskId, accepted.attempt);
+  const diff = computeApprovalDiff({ repoPath: accepted.repoPath, baseRef: accepted.baseRef, branch });
+  if (!diff.trim()) {
+    return { eligible: false, alreadyMerged: false, reason: "The accepted branch has nothing beyond its base — nothing to approve." };
+  }
+
+  return { eligible: true, alreadyMerged: false, branch, repoPath: accepted.repoPath, diff };
+}
+
+export interface ApproveResult {
+  ok: boolean;
+  message: string;
+}
+
+/** Merge and push the accepted branch into the real repo, gated on the
+ *  dashboard's Merge button having just been clicked — that click is the
+ *  human "yes" this operation requires, the same as the CLI's y/N prompt. */
+export function approveObjective(db: Db, objectiveId: string, approvedBy: string): ApproveResult {
+  const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+  if (!objective) return { ok: false, message: "No such objective." };
+  if (objective.mergedAt) return { ok: false, message: "Already merged." };
+
+  const accepted = acceptedRun(db, objectiveId);
+  if (!accepted) return { ok: false, message: "Nothing to approve." };
+
+  const branch = attemptBranchName(accepted.taskId, accepted.attempt);
+  const result = mergeAndPush({ repoPath: accepted.repoPath, baseRef: accepted.baseRef, branch });
+
+  if (result.merged) {
+    markObjectiveMerged(db, objectiveId);
+    appendEvent(db, {
+      objectiveId,
+      payload: {
+        type: "objective.approved",
+        branch,
+        baseRef: result.baseBranch,
+        pushed: result.pushed,
+        approvedBy,
+      },
+    });
+  }
+
+  return { ok: result.merged, message: result.message };
 }

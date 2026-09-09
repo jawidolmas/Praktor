@@ -1,0 +1,1 @@
+ALTER TABLE `objectives` ADD `merged_at` integer;

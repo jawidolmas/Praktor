@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import type { AcceptanceCheck } from "@exec/core";
 import { answerDecision, openDb, runMigrations } from "@exec/db";
+import { approveObjective } from "./approve.js";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
 import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.js";
 import { printEvents } from "./events.js";
@@ -16,6 +17,7 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
   exec-agent watch <objective-id>
   exec-agent events <objective-id>
   exec-agent decide <decision-key> <option-id> [--by "<name>"]
+  exec-agent approve <objective-id>
   exec-agent daemon start|stop|status
 
 "do" is the quick path: say what you want, name the repo somewhere in the
@@ -61,6 +63,11 @@ starts. "daemon status" reports whether one is running and its pid.
 "decide" answers an open decision from any terminal, not necessarily the one
 watching the objective — useful once you've walked away. The dashboard can
 also answer decisions. Omitting --by records "cli-operator".
+
+"approve" is the human checkpoint before anything reaches your real repo: a
+worker's work always lands on its own branch, never merged automatically.
+This shows you the diff, and on "y" merges that branch into your repo's real
+base branch and pushes it. The dashboard has the same thing as a button.
 
 Example:
   exec-agent run \\
@@ -281,6 +288,17 @@ async function main(): Promise<void> {
 
   if (command === "daemon") {
     await runDaemon(rest);
+    return;
+  }
+
+  if (command === "approve") {
+    const objectiveId = rest[0];
+    if (!objectiveId) {
+      console.error("usage: exec-agent approve <objective-id>");
+      process.exitCode = 1;
+      return;
+    }
+    await approveObjective(objectiveId);
     return;
   }
 

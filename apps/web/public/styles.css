@@ -170,6 +170,21 @@ tr.row-link:hover { background: var(--accent-weak); }
 .log-line.kind-error .text { color: var(--error); }
 .log-line.kind-muted .text { color: var(--text-muted); }
 
+.diff {
+  max-height: 480px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.diff > div { padding: 1px 18px; white-space: pre; }
+.diff-file { color: var(--text-muted); font-weight: 600; }
+.diff-hunk { color: var(--accent); background: var(--accent-weak); }
+.diff-add { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
+.diff-del { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); }
+.diff-ctx { color: var(--text-muted); }
+
 .live-dot {
   display: inline-block;
   width: 7px;

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { newId } from "@exec/core";
 import { openDb, type Db } from "./client.js";
 import { runMigrations } from "./migrate.js";
-import { decisions, objectives, tasks } from "./schema.js";
+import { decisions, objectives, runs, tasks } from "./schema.js";
 import {
+  acceptedRun,
   activeObjectives,
   addRuledOut,
   answerDecision,
   appendEvent,
+  markObjectiveMerged,
   nextDecisionKey,
   readEvents,
   readyTasks,
@@ -229,5 +231,48 @@ describe("ruled-out tracking", () => {
 
     const row = db.select().from(tasks).all().find((t) => t.id === a)!;
     expect(row.ruledOut).toEqual(["bump precedence table", "rewrite recursive call"]);
+  });
+});
+
+function addRun(taskId: string, attempt: number): void {
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+  db.insert(runs)
+    .values({
+      id: newId(), taskId, objectiveId, attempt, sessionId: newId(),
+      model: "claude-sonnet-5", effort: "medium", worktreePath: "/tmp/wt",
+      status: "finished", exitReason: "completed", turns: 1, usage,
+      costUsdEstimate: 0, startedAt: Date.now(),
+    })
+    .run();
+}
+
+describe("acceptedRun", () => {
+  it("returns the highest-attempt run for a done objective's task", () => {
+    const taskId = addTask("T-001");
+    addRun(taskId, 1);
+    addRun(taskId, 2);
+    setObjectiveStatus(db, objectiveId, "done");
+
+    const result = acceptedRun(db, objectiveId);
+    expect(result).toEqual({ taskId, attempt: 2, repoPath: "/tmp/repo", baseRef: "HEAD" });
+  });
+
+  it("returns undefined when the objective isn't done yet", () => {
+    const taskId = addTask("T-001");
+    addRun(taskId, 1);
+    expect(acceptedRun(db, objectiveId)).toBeUndefined();
+  });
+
+  it("returns undefined for an unknown objective", () => {
+    expect(acceptedRun(db, "no-such-id")).toBeUndefined();
+  });
+});
+
+describe("markObjectiveMerged", () => {
+  it("records a merge timestamp on the objective", () => {
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.mergedAt).toBeNull();
+    markObjectiveMerged(db, objectiveId);
+    const row = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+    expect(row?.mergedAt).toBeTypeOf("number");
   });
 });

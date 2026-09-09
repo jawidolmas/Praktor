@@ -74,11 +74,73 @@ function renderDecisions(decisions) {
   el.innerHTML = decisions.map((d) => renderDecisionCard(d)).join("");
 }
 
+function renderDiff(diff) {
+  return diff
+    .split("\n")
+    .map((line) => {
+      let cls = "diff-ctx";
+      if (line.startsWith("+++") || line.startsWith("---")) cls = "diff-file";
+      else if (line.startsWith("@@")) cls = "diff-hunk";
+      else if (line.startsWith("+")) cls = "diff-add";
+      else if (line.startsWith("-")) cls = "diff-del";
+      return `<div class="${cls}">${escapeHtml(line) || " "}</div>`;
+    })
+    .join("");
+}
+
+async function mergeApproved() {
+  const btn = document.getElementById("mergeBtn");
+  const byInput = document.getElementById("approvedBy");
+  btn.disabled = true;
+  btn.textContent = "Merging…";
+  const { ok, data } = await postJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/approve`, {
+    approvedBy: (byInput && byInput.value.trim()) || "dashboard",
+  });
+  if (!ok) alert(data.message || "Merge failed.");
+  await refreshApproval();
+  await refreshDetail();
+}
+
+function renderApproval(status) {
+  const panel = document.getElementById("approvalPanel");
+  const el = document.getElementById("approval");
+
+  if (status.alreadyMerged) {
+    panel.hidden = false;
+    el.innerHTML = `<div class="empty">✓ Approved and merged at ${new Date(status.mergedAt).toLocaleString()}.</div>`;
+    return;
+  }
+  if (!status.eligible) {
+    panel.hidden = true;
+    return;
+  }
+
+  panel.hidden = false;
+  el.innerHTML = `
+    <div style="padding: 0 18px 14px; font-size: 13px;">
+      <span class="mono">${escapeHtml(status.branch)}</span> against
+      <span class="mono">${escapeHtml(status.repoPath)}</span> — review before this touches your real repo.
+    </div>
+    <div class="diff">${renderDiff(status.diff)}</div>
+    <div class="decision-answer-row" style="padding: 14px 18px;">
+      <input type="text" id="approvedBy" class="by-input" placeholder="approved by (optional)" />
+      <button class="option-btn recommended" id="mergeBtn">Merge into real repo &amp; push</button>
+    </div>
+  `;
+  document.getElementById("mergeBtn").addEventListener("click", () => mergeApproved().catch((err) => console.error(err)));
+}
+
+async function refreshApproval() {
+  const status = await fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/approval`);
+  renderApproval(status);
+}
+
 async function refreshDetail() {
   const detail = await fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}`);
   renderHeader(detail.objective);
   renderTasks(detail.tasks, detail.runs);
   renderDecisions(detail.decisions);
+  await refreshApproval();
 }
 
 function appendLogLines(events) {

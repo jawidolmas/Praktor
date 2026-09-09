@@ -28,6 +28,7 @@ describe("describeEvent", () => {
       { type: "finding.recorded", title: "t", detail: "" },
       { type: "run.progress", milestone: "m", detail: "" },
       { type: "note", message: "n" },
+      { type: "objective.approved", branch: "exec/abc-attempt-1", baseRef: "main", pushed: true, approvedBy: "dashboard" },
     ];
     for (const payload of samples) {
       const display = describeEvent(payload);
