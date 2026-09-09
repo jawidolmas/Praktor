@@ -24,10 +24,18 @@ export interface WorktreeHandle {
 
 /** Exported for reuse by anything else that needs to run git against a
  *  specific repo path (e.g. approve.ts, operating on the real repo rather
- *  than a worktree) — one implementation of "run git with -C", not two. */
+ *  than a worktree) — one implementation of "run git with -C", not two.
+ *
+ *  `windowsHide` matters specifically because the daemon that calls this has
+ *  no console of its own (see daemon-client.ts) — without it, Windows opens
+ *  a fresh, visible console for every single git invocation. Found live: a
+ *  person has no way to tell that window apart from something worth
+ *  closing, and closing it kills the git command running inside it, which
+ *  the daemon then reads as that step of the task failing. */
 export function git(repoPath: string, args: string[]): string {
   return execFileSync("git", ["-C", repoPath, ...args], {
     encoding: "utf8",
+    windowsHide: true,
   }).trim();
 }
 

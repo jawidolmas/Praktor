@@ -25,9 +25,12 @@ import { execSync } from "node:child_process";
  * user-supplied `--check` invoking this script directly, outside the
  * daemon), only the dirty-tree half applies.
  */
+// This script itself runs with no console of its own (spawned by the
+// daemon, which has none either) — without windowsHide, each of these would
+// pop up its own fresh, visible console window on Windows.
 function isDirty() {
   try {
-    return execSync("git status --porcelain", { encoding: "utf8" }).trim().length > 0;
+    return execSync("git status --porcelain", { encoding: "utf8", windowsHide: true }).trim().length > 0;
   } catch {
     return false;
   }
@@ -36,7 +39,7 @@ function isDirty() {
 function headMovedPastBase(baseSha) {
   if (!baseSha) return false;
   try {
-    const head = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+    const head = execSync("git rev-parse HEAD", { encoding: "utf8", windowsHide: true }).trim();
     return head !== baseSha;
   } catch {
     return false;

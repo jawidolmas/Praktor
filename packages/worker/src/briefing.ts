@@ -72,7 +72,10 @@ export function buildBriefingFromInput(input: BuildBriefingInput): RepoBriefing 
 export function buildRepoBriefing(worktreePath: string): RepoBriefing {
   let trackedFiles: string[] = [];
   try {
-    trackedFiles = execFileSync("git", ["-C", worktreePath, "ls-files"], { encoding: "utf8" })
+    trackedFiles = execFileSync("git", ["-C", worktreePath, "ls-files"], {
+      encoding: "utf8",
+      windowsHide: true,
+    })
       .split("\n")
       .filter(Boolean);
   } catch {

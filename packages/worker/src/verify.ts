@@ -34,6 +34,10 @@ function runCheck(cwd: string, check: AcceptanceCheck, extraEnv?: Record<string,
     timeout: check.timeoutMs,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
+    // The daemon that runs this has no console of its own — without this,
+    // Windows opens a fresh, visible one for the check command every time,
+    // and closing it kills the check mid-run rather than just failing it.
+    windowsHide: true,
     ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
   });
   const durationMs = Date.now() - startedAt;
