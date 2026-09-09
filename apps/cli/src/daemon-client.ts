@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { openSync } from "node:fs";
+import { openSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,23 +21,59 @@ const daemonEntry = join(
   "index.ts",
 );
 
-function spawnDaemon(): void {
-  const require = createRequire(import.meta.url);
-  const tsxCli = require.resolve("tsx/cli");
+/**
+ * On Windows, Node's own `detached: true` + `windowsHide: true` combination
+ * is not reliable — a known libuv limitation where `detached` can force a
+ * visible console window regardless of `windowsHide`. Confirmed live, twice:
+ * that combination left a real, persistent window open (titled after
+ * node.exe) with nothing about it to distinguish it from a stray popup —
+ * closing it killed the daemon the same way every time.
+ *
+ * `Start-Process -WindowStyle Hidden` goes through a different, more
+ * reliable path — confirmed by enumerating actual visible windows
+ * before/after that it creates none. It launches a tiny generated .cmd
+ * script rather than the target command inline: `cmd.exe /c` and
+ * PowerShell's own argument re-quoting don't compose cleanly for a command
+ * line built from several separately-quoted paths (confirmed: that shape
+ * silently failed to launch anything), whereas a plain batch file with
+ * normal quoting has no cross-boundary escaping to get wrong. The command
+ * handed to the outer PowerShell is base64-encoded (`-EncodedCommand`)
+ * specifically so a path containing spaces or quotes never has to survive
+ * being embedded in a hand-built command-line string at all.
+ */
+function spawnDaemonWindows(tsxCli: string): void {
+  const log = logFilePath();
+  const launcherPath = join(dirname(log), "daemon-launch.cmd");
+  const batContent = `@echo off\r\n"${process.execPath}" "${tsxCli}" "${daemonEntry}" >> "${log}" 2>&1\r\n`;
+  writeFileSync(launcherPath, batContent, "utf8");
+
+  const script = `Start-Process -FilePath '${launcherPath.replace(/'/g, "''")}' -WindowStyle Hidden`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
+    { windowsHide: true, stdio: "ignore" },
+  );
+  child.unref();
+}
+
+function spawnDaemonPosix(tsxCli: string): void {
   const logFd = openSync(logFilePath(), "a");
   const child = spawn(process.execPath, [tsxCli, daemonEntry], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    // Without this, Windows pops up a visible console window for the
-    // daemon — found live: a person who didn't spawn it themselves has no
-    // reason to expect that window and every reason to close what looks
-    // like a stray popup, which kills the daemon (Windows' console close
-    // isn't a signal Node reliably catches as a graceful shutdown, so it
-    // dies with no log line at all). `windowsHide` is a no-op on other
-    // platforms, so this is safe to always pass.
-    windowsHide: true,
   });
   child.unref();
+}
+
+function spawnDaemon(): void {
+  const require = createRequire(import.meta.url);
+  const tsxCli = require.resolve("tsx/cli");
+  if (process.platform === "win32") {
+    spawnDaemonWindows(tsxCli);
+  } else {
+    spawnDaemonPosix(tsxCli);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
