@@ -160,6 +160,15 @@ export const decisions = sqliteTable(
     answeredAt: integer("answered_at"),
     rationale: text("rationale"),
     deadline: integer("deadline"),
+    // Set once a push notification for this decision has actually been sent
+    // (Telegram today). Null is the "still needs notifying" queue, so the
+    // bridge can find pending work with a plain WHERE clause instead of
+    // resending on every poll.
+    notifiedAt: integer("notified_at"),
+    // The bot message carrying this decision's options, so an answer routed
+    // back through the same channel (a tapped inline button) can edit that
+    // message to show it was answered, instead of leaving a stale button.
+    notifiedMessageId: integer("notified_message_id"),
     createdAt: integer("created_at").notNull().default(now),
   },
   (t) => [
@@ -224,6 +233,16 @@ export const artifacts = sqliteTable(
 export const counters = sqliteTable("counters", {
   name: text("name").primaryKey(),
   value: integer("value").notNull().default(0),
+});
+
+/**
+ * Small daemon-wide key/value state that doesn't warrant its own table — e.g.
+ * the Telegram long-poll cursor, which must survive a daemon restart or a
+ * redelivered update could re-answer a decision that already moved on.
+ */
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
 });
 
 export type ObjectiveRow = typeof objectives.$inferSelect;

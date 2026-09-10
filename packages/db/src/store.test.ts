@@ -10,13 +10,17 @@ import {
   addRuledOut,
   answerDecision,
   appendEvent,
+  getSetting,
+  markDecisionNotified,
   markObjectiveMerged,
   nextDecisionKey,
   readEvents,
   readyTasks,
   schedulableObjectives,
   setObjectiveStatus,
+  setSetting,
   setTaskStatus,
+  unnotifiedDecisions,
 } from "./store.js";
 
 const BUDGET = { maxTurns: 40, maxTokens: 400_000, maxWallClockMs: 1_800_000 };
@@ -123,6 +127,61 @@ describe("answerDecision", () => {
   it("issues sequential, quotable keys", () => {
     expect(raise([])).toBe("DEC-001");
     expect(raise([])).toBe("DEC-002");
+  });
+});
+
+describe("unnotifiedDecisions / markDecisionNotified", () => {
+  function raise(): string {
+    const key = nextDecisionKey(db);
+    db.insert(decisions)
+      .values({
+        id: newId(), key, objectiveId, level: "L2", title: "pick a store",
+        context: "two viable options", risk: "medium", recommendation: "B",
+        options: [
+          { id: "A", label: "hard delete", pros: [], cons: [] },
+          { id: "B", label: "soft delete", pros: [], cons: [] },
+        ],
+        blockedTaskIds: [], status: "open", createdAt: Date.now(),
+      })
+      .run();
+    return key;
+  }
+
+  it("lists open decisions that haven't been pushed yet, oldest first", () => {
+    const first = raise();
+    const second = raise();
+    expect(unnotifiedDecisions(db).map((d) => d.key)).toEqual([first, second]);
+  });
+
+  it("drops a decision from the list once it's marked notified", () => {
+    const key = raise();
+    const row = db.select().from(decisions).where(eq(decisions.key, key)).get()!;
+    markDecisionNotified(db, row.id, 42);
+
+    expect(unnotifiedDecisions(db)).toHaveLength(0);
+    const updated = db.select().from(decisions).where(eq(decisions.key, key)).get();
+    expect(updated?.notifiedAt).toBeTypeOf("number");
+    expect(updated?.notifiedMessageId).toBe(42);
+  });
+
+  it("excludes decisions that are already answered", () => {
+    const key = raise();
+    answerDecision(db, { key, answer: "A", answeredBy: "ceo" });
+    expect(unnotifiedDecisions(db)).toHaveLength(0);
+  });
+});
+
+describe("settings", () => {
+  it("returns undefined for a key that was never set", () => {
+    expect(getSetting(db, "telegram_update_offset")).toBeUndefined();
+  });
+
+  it("round-trips a value and overwrites it on a second set", () => {
+    setSetting(db, "telegram_update_offset", "12");
+    expect(getSetting(db, "telegram_update_offset")).toBe("12");
+
+    setSetting(db, "telegram_update_offset", "13");
+    expect(getSetting(db, "telegram_update_offset")).toBe("13");
   });
 });
 

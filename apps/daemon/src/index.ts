@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   claimPidFile,
   logFilePath,
@@ -16,6 +18,29 @@ import {
 import { reconcileSeedPolicies } from "@exec/policy";
 import { attemptBranchName, removeWorktree } from "@exec/worker";
 import { driveTask, worktreePathFor } from "./engine.js";
+import { loadTelegramConfig, runTelegramBridge } from "./telegram-bridge.js";
+
+/**
+ * The daemon is launched detached, by `spawnDaemon` in the CLI, with no
+ * shell profile behind it — so config in `.env` (TELEGRAM_BOT_TOKEN and
+ * friends) would otherwise never reach it no matter what the invoking
+ * terminal has exported. Resolved against this file's own location, not
+ * `process.cwd()`, because the daemon can be started while sitting in any
+ * repo `do`/`run` was pointed at — same reasoning as `execHome()` being
+ * fixed rather than cwd-relative. `loadEnvFile` only landed in Node
+ * 20.12/21.7; guarded rather than required, since package.json's floor is
+ * plain "20".
+ */
+function loadDotEnv(): void {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const loadEnvFile = (process as { loadEnvFile?: (path: string) => void }).loadEnvFile;
+  if (!loadEnvFile) return;
+  try {
+    loadEnvFile(join(repoRoot, ".env"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
 
 /**
  * The daemon: the persistent process that actually drives objectives, so
@@ -115,6 +140,8 @@ async function mainLoop(db: Db): Promise<never> {
 }
 
 function main(): void {
+  loadDotEnv();
+
   const claim = claimPidFile();
   if (!claim.claimed) {
     console.log(`A daemon is already running (pid ${claim.existingPid}). Exiting.`);
@@ -141,6 +168,19 @@ function main(): void {
   console.log(`Praktor daemon started (pid ${process.pid}).`);
   console.log(`Database: ${path}`);
   console.log(`Log:      ${logFilePath()}`);
+
+  const telegramConfig = loadTelegramConfig();
+  if (telegramConfig) {
+    // Fire-and-forget, deliberately not awaited: its own internal loops
+    // already catch and retry forever, so this only rejects on a genuine
+    // programming error — and even then, a broken notification channel
+    // must not stop the daemon from driving tasks.
+    runTelegramBridge(db, telegramConfig).catch((err: unknown) => {
+      console.error("[telegram] bridge crashed and will not restart until the daemon does:", err);
+    });
+  } else {
+    console.log("Telegram bridge: disabled (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable).");
+  }
 
   mainLoop(db).catch((err: unknown) => {
     console.error("daemon loop crashed:", err);

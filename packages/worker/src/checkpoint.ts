@@ -30,7 +30,12 @@ export function buildCheckpoint(args: BuildCheckpointArgs): Checkpoint {
 
   let currentProblem = "The previous attempt did not reach a verified done state.";
 
-  if (args.stallSignal) {
+  if (args.stallSignal?.signal === "decision_timeout") {
+    // Not a failed approach — the worker correctly asked a question and
+    // nobody had answered it yet. There is nothing here to rule out; doing
+    // so would wrongly tell a respawned worker to avoid asking questions.
+    currentProblem = `Paused: ${args.stallSignal.detail}`;
+  } else if (args.stallSignal) {
     currentProblem = `Stalled: ${args.stallSignal.detail}`;
     attemptsTried.push({
       approach: args.resultText?.slice(0, 300) ?? args.intent,

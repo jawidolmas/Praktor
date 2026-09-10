@@ -21,12 +21,25 @@ import { evaluate } from "@exec/policy";
  * asking for something, and no transcript parsing on the supervisor side.
  */
 
+/**
+ * How a raised decision was resolved. "timed_out" is not an error — it means
+ * nobody answered within the decision's deadline, so the caller should stop
+ * this session rather than keep a worker (and its subprocess) idling on a
+ * promise that might not resolve for hours. `decisionKey` on that variant is
+ * what lets the attempt that eventually resumes wait on the same decision
+ * instead of raising a new one.
+ */
+export type RequestDecisionResolution =
+  | { outcome: "answered"; answer: string; answeredBy: string }
+  | { outcome: "timed_out"; decisionKey: string };
+
 export interface SupervisorToolCallbacks {
-  /** Resolves once a human (or a policy) has answered. The worker's turn blocks
-   *  on this call, which is the point — a genuine fork should stop the work. */
+  /** Resolves once a human answers, or once the decision's deadline passes
+   *  unanswered. The worker's turn blocks on this call either way — a
+   *  genuine fork should stop the work, one way or the other. */
   requestDecision: (
     input: RequestDecisionInputT,
-  ) => Promise<{ answer: string; answeredBy: string }>;
+  ) => Promise<RequestDecisionResolution>;
   reportProgress: (input: ReportProgressInputT) => void;
   recordFinding: (input: RecordFindingInputT) => void;
   loadPolicies: () => Policy[];
@@ -45,9 +58,17 @@ export function createSupervisorTools(callbacks: SupervisorToolCallbacks) {
       "choices you are equipped to make yourself.",
     RequestDecisionInput.shape,
     async (input: RequestDecisionInputT) => {
-      const { answer, answeredBy } = await callbacks.requestDecision(input);
+      const resolution = await callbacks.requestDecision(input);
+      if (resolution.outcome === "timed_out") {
+        return text(
+          "No one answered in time, so this session is stopping now rather than continuing " +
+            "to wait idle. It will resume automatically, told the answer, once the decision " +
+            "is made — nothing more to do here.",
+        );
+      }
       return text(
-        `Decision recorded: option ${answer} (answered by ${answeredBy}). Proceed accordingly.`,
+        `Decision recorded: option ${resolution.answer} (answered by ${resolution.answeredBy}). ` +
+          "Proceed accordingly.",
       );
     },
   );

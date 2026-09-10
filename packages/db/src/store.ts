@@ -18,7 +18,9 @@ import {
   objectives,
   policies,
   runs,
+  settings,
   tasks,
+  type DecisionRow,
   type ObjectiveRow,
   type TaskRow,
 } from "./schema.js";
@@ -321,6 +323,45 @@ export function answerDecision(db: Db, args: AnswerDecisionArgs): boolean {
   });
 }
 
+/** Open decisions no push notification has gone out for yet. */
+export function unnotifiedDecisions(db: Db): DecisionRow[] {
+  return db
+    .select()
+    .from(decisions)
+    .where(and(eq(decisions.status, "open"), isNull(decisions.notifiedAt)))
+    .orderBy(asc(decisions.createdAt))
+    .all();
+}
+
+/** Record that a push notification for this decision was sent, so the
+ *  bridge's poll doesn't resend it — and remember which message, so an
+ *  answer routed back through the same channel can edit it. */
+export function markDecisionNotified(
+  db: Db,
+  decisionId: string,
+  messageId: number,
+): void {
+  db.update(decisions)
+    .set({ notifiedAt: Date.now(), notifiedMessageId: messageId })
+    .where(eq(decisions.id, decisionId))
+    .run();
+}
+
+/* ------------------------------------------------------------------ *
+ * Settings — small daemon-wide key/value state
+ * ------------------------------------------------------------------ */
+
+export function getSetting(db: Db, key: string): string | undefined {
+  return db.select().from(settings).where(eq(settings.key, key)).get()?.value;
+}
+
+export function setSetting(db: Db, key: string, value: string): void {
+  db.insert(settings)
+    .values({ key, value })
+    .onConflictDoUpdate({ target: settings.key, set: { value } })
+    .run();
+}
+
 /* ------------------------------------------------------------------ *
  * Policies
  * ------------------------------------------------------------------ */
@@ -434,5 +475,5 @@ export function markObjectiveMerged(db: Db, objectiveId: string): void {
     .run();
 }
 
-export { objectives, tasks, runs, events, decisions, policies, memories, artifacts };
+export { objectives, tasks, runs, events, decisions, policies, memories, artifacts, settings };
 export { isNull };

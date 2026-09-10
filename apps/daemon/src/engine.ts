@@ -32,6 +32,7 @@ import {
   type VerifyOutcome,
   type WorktreeHandle,
 } from "@exec/worker";
+import { sendDecisionPacket } from "./decision-packet.js";
 import { renderReport, type AttemptSummary } from "./report.js";
 
 /**
@@ -70,16 +71,46 @@ export function clampParkDelay(retryDelayMs: number | undefined): number {
 
 const DECISION_POLL_MS = 3000;
 
-/** Blocks until someone — a terminal watching this objective, the dashboard,
- *  or `exec-agent decide` — answers the decision. There is deliberately no
- *  timeout: a decision the daemon gave up on by itself is not a decision. */
-async function waitForDecision(db: Db, key: string): Promise<{ answer: string; answeredBy: string }> {
+/**
+ * How long a raised decision waits for an answer before the run driving it
+ * gets stopped rather than left idling. Chosen to be short enough that a
+ * genuinely quick answer (someone right there) never notices it, and long
+ * enough not to abort over someone typing a reply. The worker session itself
+ * costs nothing while blocked (see driver.ts) — what this actually buys is
+ * not leaving the process (and the worktree it holds) sitting open
+ * indefinitely, and giving the person a clean packet to come back to instead
+ * of a still-running thing to remember.
+ */
+const DECISION_TIMEOUT_MS = 5 * 60_000;
+
+/** Polls until the decision is answered or `deadline` passes, whichever
+ *  comes first. `deadline` of `Number.POSITIVE_INFINITY` waits forever —
+ *  used once a run has already been stopped and there is nothing left to
+ *  time out on, only an answer left to wait for. */
+async function waitForDecisionAnswer(
+  db: Db,
+  key: string,
+  deadline: number,
+): Promise<{ answer: string; answeredBy: string } | undefined> {
   for (;;) {
     const row = db.select().from(decisions).where(eq(decisions.key, key)).get();
     if (row?.status === "answered" && row.answer && row.answeredBy) {
       return { answer: row.answer, answeredBy: row.answeredBy };
     }
+    if (Date.now() >= deadline) return undefined;
     await sleep(DECISION_POLL_MS);
+  }
+}
+
+/** Waits for an answer with no deadline — for the resume side, once the
+ *  attempt that raised the decision has already been stopped. */
+async function waitForDecisionAnswerForever(
+  db: Db,
+  key: string,
+): Promise<{ answer: string; answeredBy: string }> {
+  for (;;) {
+    const answered = await waitForDecisionAnswer(db, key, Number.POSITIVE_INFINITY);
+    if (answered) return answered;
   }
 }
 
@@ -181,6 +212,7 @@ async function runAttempt(
       supervisorCallbacks: {
         requestDecision: async (input) => {
           const decisionKeyValue = nextDecisionKey(db);
+          const deadline = Date.now() + DECISION_TIMEOUT_MS;
           db.insert(decisions)
             .values({
               id: newId(),
@@ -196,6 +228,7 @@ async function runAttempt(
               risk: input.risk,
               blockedTaskIds: [task.id],
               status: "open",
+              deadline,
               createdAt: Date.now(),
             })
             .run();
@@ -215,11 +248,22 @@ async function runAttempt(
           setObjectiveStatus(db, objective.id, "blocked");
           console.log(`[${objective.id.slice(0, 8)}] decision needed: ${decisionKeyValue} — ${input.title}`);
 
-          const answered = await waitForDecision(db, decisionKeyValue);
+          const answered = await waitForDecisionAnswer(db, decisionKeyValue, deadline);
+          if (!answered) {
+            console.log(
+              `[${objective.id.slice(0, 8)}] ${decisionKeyValue} unanswered after ` +
+                `${Math.round(DECISION_TIMEOUT_MS / 60_000)}m — stopping this session; task stays blocked`,
+            );
+            // Deliberately left "blocked": this is not a failure being
+            // recovered from, it is still the same open question. The task
+            // only becomes schedulable again once `answerDecision` resolves
+            // it, from whichever channel that happens on.
+            return { outcome: "timed_out" as const, decisionKey: decisionKeyValue };
+          }
 
           setTaskStatus(db, task.id, "running");
           setObjectiveStatus(db, objective.id, "active");
-          return answered;
+          return { outcome: "answered" as const, answer: answered.answer, answeredBy: answered.answeredBy };
         },
         reportProgress: (input) => {
           appendEvent(db, {
@@ -256,18 +300,46 @@ async function runAttempt(
       `[${objective.id.slice(0, 8)}] attempt ${attempt} run finished: ${result.exitReason} (${result.turns} turns, $${result.costUsdEstimate.toFixed(4)} est.)`,
     );
 
-    if (result.exitReason !== "rate_limited") {
-      return { worktree, runId, result };
+    if (result.exitReason === "rate_limited") {
+      setTaskStatus(db, task.id, "parked");
+      setObjectiveStatus(db, objective.id, "parked");
+      const delay = clampParkDelay(lastRateLimitDelayMs);
+      console.log(`[${objective.id.slice(0, 8)}] rate limited — retrying attempt ${attempt} in ${Math.round(delay / 1000)}s`);
+      await sleep(delay);
+      setTaskStatus(db, task.id, "running");
+      setObjectiveStatus(db, objective.id, "active");
+      note = note ? `${note}\n\n${RATE_LIMIT_NOTE}` : RATE_LIMIT_NOTE;
+      continue;
     }
 
-    setTaskStatus(db, task.id, "parked");
-    setObjectiveStatus(db, objective.id, "parked");
-    const delay = clampParkDelay(lastRateLimitDelayMs);
-    console.log(`[${objective.id.slice(0, 8)}] rate limited — retrying attempt ${attempt} in ${Math.round(delay / 1000)}s`);
-    await sleep(delay);
-    setTaskStatus(db, task.id, "running");
-    setObjectiveStatus(db, objective.id, "active");
-    note = note ? `${note}\n\n${RATE_LIMIT_NOTE}` : RATE_LIMIT_NOTE;
+    // A decision went unanswered past its deadline: the run above already
+    // stopped itself (see driver.ts). Same shape as the rate-limit branch —
+    // wait, then resume the same attempt, same worktree, without ever
+    // returning to `driveTask` — because this is not a failed attempt, it is
+    // one still-open question, and must not consume the task's attempt
+    // budget or risk `driveTask` marking the objective "failed" purely
+    // because a person hadn't replied yet.
+    if (result.exitReason === "escalated" && result.stallSignal?.decisionKey !== undefined) {
+      const key = result.stallSignal.decisionKey;
+      await sendDecisionPacket(db, objective, task, key, worktree.path);
+      console.log(`[${objective.id.slice(0, 8)}] attempt ${attempt} paused on ${key} — waiting for it to be answered`);
+      const answered = await waitForDecisionAnswerForever(db, key);
+      const decisionRow = db.select().from(decisions).where(eq(decisions.key, key)).get();
+      const optionLabel =
+        decisionRow?.options.find((o) => o.id === answered.answer)?.label ?? answered.answer;
+      setTaskStatus(db, task.id, "running");
+      setObjectiveStatus(db, objective.id, "active");
+      const resumeNote =
+        `Your previous session on this attempt was paused because decision ${key} ` +
+        `("${decisionRow?.title ?? ""}") went unanswered for a few minutes — the repository ` +
+        "already reflects whatever progress had been made, so continue from there rather than " +
+        `starting over. It has since been answered: option ${answered.answer} (${optionLabel}). ` +
+        "Proceed accordingly.";
+      note = note ? `${note}\n\n${resumeNote}` : resumeNote;
+      continue;
+    }
+
+    return { worktree, runId, result };
   }
 }
 

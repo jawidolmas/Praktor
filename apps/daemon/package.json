@@ -7,7 +7,9 @@
     "@exec/core": "*",
     "@exec/db": "*",
     "@exec/policy": "*",
+    "@exec/telegram": "*",
     "@exec/worker": "*",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "pdf-lib": "^1.17.1"
   }
 }

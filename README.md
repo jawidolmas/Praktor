@@ -11,8 +11,8 @@ coding itself.
 
 ## Status
 
-This is v0.1: **one task per objective**. There is no multi-task decomposition and no Telegram
-bridge yet — `apps/telegram` is a reserved directory for that, not built out. What exists today:
+This is v0.1: **one task per objective**. There is no multi-task decomposition yet. What exists
+today:
 
 - Plain-English intake (`exec-agent do "..."`) that resolves the target repo and infers a
   pass/fail check where it reasonably can.
@@ -33,7 +33,9 @@ bridge yet — `apps/telegram` is a reserved directory for that, not built out. 
   clears, instead of giving up — it does not consume the attempt budget.
 - Decisions raised by a worker (`request_decision`) can be answered from wherever you actually
   are: the terminal watching it (same prompt as always), `exec-agent decide <key> <option>` from
-  any other terminal, or a button in the dashboard.
+  any other terminal, a button in the dashboard, or — if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
+  are set — a push notification to your phone with tappable options, answerable from anywhere.
+  See [Telegram bridge](#telegram-bridge) below.
 - A human review checkpoint (`exec-agent approve <objective-id>`, or the dashboard's diff view and
   Merge button): a worker's accepted work always lands on its own branch, never merged
   automatically — this is what actually gets it into your real repo, once you've looked.
@@ -152,6 +154,39 @@ makes; SQLite's WAL mode is what lets this, the CLI, and the daemon all touch th
 concurrently without blocking each other. Once an objective is done, its "Review & approve" panel
 shows the real diff against your repo, colored like a normal diff view — the Merge button behind
 it runs the same merge-and-push `exec-agent approve` does, gated on you clicking it.
+
+## Telegram bridge
+
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (in `.env` — the daemon loads it directly, you
+don't need to `export` anything) and the daemon pushes every decision a worker raises to that
+chat the moment it's raised, with one tappable button per option. Tapping one answers it exactly
+the way `exec-agent decide` would — same `answerDecision` write, so the worker unblocks whether
+you tap a button, run the CLI command, or click the dashboard, whichever you happen to reach
+first.
+
+Setup: message `@BotFather` in Telegram, send `/newbot`, and it hands you a token. Then message
+your new bot once (anything) and fetch your chat id from
+`https://api.telegram.org/bot<token>/getUpdates` — look for `message.chat.id` in the response.
+Both go in `.env`; there's nothing else to configure and nothing to expose publicly — replies are
+picked up by long-polling Telegram, not a webhook, so no port needs to be open.
+
+This runs as two loops inside the daemon process itself (push newly-raised decisions; long-poll
+for taps) rather than as a separate process — one thing to keep running, consistent with the
+daemon already being the one thing that has to survive you closing the terminal.
+
+A decision unanswered for 5 minutes stops that worker session rather than leaving it idling on a
+question that might not get answered for hours — not because the wait costs tokens (it doesn't;
+a blocked decision is a local database poll, not an API call), but because a live process sitting
+open indefinitely is worse than a clean packet you can come back to. The moment that happens, a
+PDF is generated — the decision with full pros/cons, what's been done so far, which files are
+touched — and sent to the same chat. Answer it whenever (Telegram, `exec-agent decide`, or the
+dashboard, same as any decision) and a fresh worker session resumes the same attempt, same
+worktree, already told the answer — it does not start over, and it does not count against the
+task's attempt budget.
+
+A daily digest also goes out once, at `TELEGRAM_DIGEST_HOUR` local time (default 8am) —
+what's finished, still running, waiting on a decision, or paused on a rate limit — so the habit
+is "read this every morning," not "hope you remember to check."
 
 ## Configuration
 

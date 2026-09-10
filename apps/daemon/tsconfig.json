@@ -6,6 +6,7 @@
     { "path": "../../packages/core" },
     { "path": "../../packages/db" },
     { "path": "../../packages/policy" },
+    { "path": "../../packages/telegram" },
     { "path": "../../packages/worker" }
   ]
 }

@@ -177,7 +177,26 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
     requestDecision: async (input) => {
       const waitStarted = Date.now();
       try {
-        return await args.supervisorCallbacks.requestDecision(input);
+        const resolution = await args.supervisorCallbacks.requestDecision(input);
+        if (resolution.outcome === "timed_out") {
+          // Nobody answered by the deadline. There is no graceful way to
+          // un-block a tool call that is never going to resolve on its own —
+          // abortController.abort() is the immediate signal (unlike
+          // interrupt(), which negotiates a clean stop between turns and
+          // would never get a turn boundary to act on while this call sits
+          // open). Whatever the SDK does with this now-orphaned tool call is
+          // moot: the subprocess teardown it triggers is what actually ends
+          // the run, and the loop below tolerates that.
+          stallSignal = {
+            signal: "decision_timeout",
+            detail: `Unanswered: ${input.title}`,
+            decisionKey: resolution.decisionKey,
+          };
+          stopping = true;
+          exitReason = "escalated";
+          abortController.abort();
+        }
+        return resolution;
       } finally {
         decisionWaitMs += Date.now() - waitStarted;
       }
@@ -247,105 +266,114 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
   let stopping = false;
   let finishedEmitted = false;
 
-  for await (const msg of q) {
-    if (msg.type === "assistant") {
-      turns += 1;
-      usage = toTokenUsage(msg.message.usage);
+  try {
+    for await (const msg of q) {
+      if (msg.type === "assistant") {
+        turns += 1;
+        usage = toTokenUsage(msg.message.usage);
 
-      for (const block of msg.message.content) {
-        if (block.type === "text" && block.text.trim()) {
-          args.onEvent({ type: "run.message", text: block.text.trim() });
+        for (const block of msg.message.content) {
+          if (block.type === "text" && block.text.trim()) {
+            args.onEvent({ type: "run.message", text: block.text.trim() });
+          }
         }
-      }
 
-      const sample: TurnSample = {
-        turn: turns,
-        usage,
-        toolCalls: turnToolCalls,
-        errorSignatures: turnErrors,
-        churn: churn(args.cwd).linesChanged,
-      };
-      samples.push(sample);
-      turnToolCalls = [];
-      turnErrors = [];
+        const sample: TurnSample = {
+          turn: turns,
+          usage,
+          toolCalls: turnToolCalls,
+          errorSignatures: turnErrors,
+          churn: churn(args.cwd).linesChanged,
+        };
+        samples.push(sample);
+        turnToolCalls = [];
+        turnErrors = [];
 
-      args.onEvent({
-        type: "run.turn",
-        turn: turns,
-        usage,
-        contextFraction: contextFraction(sample, contextWindow),
-      });
-
-      if (stopping) continue;
-
-      const wallClockMs = Date.now() - startedAt - decisionWaitMs;
-      const stall =
-        wallClockMs > args.budget.maxWallClockMs
-          ? {
-              signal: "wall_clock_budget" as const,
-              detail: `reached the ${Math.round(args.budget.maxWallClockMs / 1000)}s wall-clock budget for this task`,
-            }
-          : detectStall({
-              samples,
-              contextWindow,
-              maxTurns: args.budget.maxTurns,
-              config: DEFAULT_STALL_CONFIG,
-            });
-      if (stall) {
-        stallSignal = stall;
-        stopping = true;
-        exitReason = "stalled";
-        args.onEvent({ type: "stall.detected", signal: stall.signal, detail: stall.detail });
-        await q.interrupt().catch(() => {
-          /* best effort — we keep draining the generator either way */
-        });
-      }
-      continue;
-    }
-
-    if (msg.type === "rate_limit_event") {
-      if (stopping) continue;
-      const info: RateLimitInfo = {
-        status: msg.rate_limit_info.status,
-        resetsAt: msg.rate_limit_info.resetsAt,
-        rateLimitType: msg.rate_limit_info.rateLimitType,
-        utilization: msg.rate_limit_info.utilization,
-      };
-      const verdict = interpretRateLimit(info);
-      if (verdict.park) {
-        stopping = true;
-        exitReason = "rate_limited";
         args.onEvent({
-          type: "ratelimit.hit",
-          source: "result",
-          retryDelayMs: verdict.resumeAt ? Math.max(0, verdict.resumeAt - Date.now()) : undefined,
+          type: "run.turn",
+          turn: turns,
+          usage,
+          contextFraction: contextFraction(sample, contextWindow),
         });
-        await q.interrupt().catch(() => {});
-      }
-      continue;
-    }
 
-    if (msg.type === "result") {
-      turns = msg.num_turns;
-      costUsdEstimate = msg.total_cost_usd;
-      isError = msg.is_error;
-      if (msg.subtype === "success") {
-        resultText = msg.result;
-      } else if (exitReason === "completed") {
-        // Only override if nothing more specific (stall/rate-limit) already fired.
-        exitReason = msg.subtype === "error_max_turns" ? "budget_exhausted" : "error";
+        if (stopping) continue;
+
+        const wallClockMs = Date.now() - startedAt - decisionWaitMs;
+        const stall =
+          wallClockMs > args.budget.maxWallClockMs
+            ? {
+                signal: "wall_clock_budget" as const,
+                detail: `reached the ${Math.round(args.budget.maxWallClockMs / 1000)}s wall-clock budget for this task`,
+              }
+            : detectStall({
+                samples,
+                contextWindow,
+                maxTurns: args.budget.maxTurns,
+                config: DEFAULT_STALL_CONFIG,
+              });
+        if (stall) {
+          stallSignal = stall;
+          stopping = true;
+          exitReason = "stalled";
+          args.onEvent({ type: "stall.detected", signal: stall.signal, detail: stall.detail });
+          await q.interrupt().catch(() => {
+            /* best effort — we keep draining the generator either way */
+          });
+        }
+        continue;
       }
-      finishedEmitted = true;
-      args.onEvent({
-        type: "run.finished",
-        exitReason,
-        turns,
-        usage,
-        costUsdEstimate,
-        durationMs: msg.duration_ms,
-      });
-      break;
+
+      if (msg.type === "rate_limit_event") {
+        if (stopping) continue;
+        const info: RateLimitInfo = {
+          status: msg.rate_limit_info.status,
+          resetsAt: msg.rate_limit_info.resetsAt,
+          rateLimitType: msg.rate_limit_info.rateLimitType,
+          utilization: msg.rate_limit_info.utilization,
+        };
+        const verdict = interpretRateLimit(info);
+        if (verdict.park) {
+          stopping = true;
+          exitReason = "rate_limited";
+          args.onEvent({
+            type: "ratelimit.hit",
+            source: "result",
+            retryDelayMs: verdict.resumeAt ? Math.max(0, verdict.resumeAt - Date.now()) : undefined,
+          });
+          await q.interrupt().catch(() => {});
+        }
+        continue;
+      }
+
+      if (msg.type === "result") {
+        turns = msg.num_turns;
+        costUsdEstimate = msg.total_cost_usd;
+        isError = msg.is_error;
+        if (msg.subtype === "success") {
+          resultText = msg.result;
+        } else if (exitReason === "completed") {
+          // Only override if nothing more specific (stall/rate-limit) already fired.
+          exitReason = msg.subtype === "error_max_turns" ? "budget_exhausted" : "error";
+        }
+        finishedEmitted = true;
+        args.onEvent({
+          type: "run.finished",
+          exitReason,
+          turns,
+          usage,
+          costUsdEstimate,
+          durationMs: msg.duration_ms,
+        });
+        break;
+      }
     }
+  } catch (err) {
+    // abortController.abort() (decision timeout) tears the subprocess down
+    // directly rather than negotiating a clean stop, so the iterator can
+    // reject instead of ending normally. That is expected exactly when we
+    // are the ones who triggered it (`stopping` is only set by this
+    // function); anything else is a real failure and must still surface.
+    if (!stopping) throw err;
   }
 
   // The generator ended (or we broke on a result) without a result message ever

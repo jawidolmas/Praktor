@@ -51,8 +51,13 @@ export interface StallSignal {
     | "no_churn"
     | "file_thrash"
     | "turn_budget"
-    | "wall_clock_budget";
+    | "wall_clock_budget"
+    | "decision_timeout";
   detail: string;
+  /** Set only for "decision_timeout" — which decision this attempt is
+   *  actually paused on, so the caller can wait for that specific key to be
+   *  answered rather than treating this like an ordinary failed approach. */
+  decisionKey?: string;
 }
 
 const WRITE_TOOLS = new Set(["edit", "write", "notebookedit", "multiedit"]);
