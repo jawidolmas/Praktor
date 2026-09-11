@@ -52,10 +52,17 @@ function text(body: string) {
 export function createSupervisorTools(callbacks: SupervisorToolCallbacks) {
   const requestDecisionTool = tool(
     "request_decision",
-    "Escalate a genuine fork in the road to the person supervising this work — a " +
-      "choice with real consequences where you cannot pick confidently on your own. " +
-      "This call blocks until answered. Do not use it for routine implementation " +
-      "choices you are equipped to make yourself.",
+    "Ask, notify, message, or check in with the person supervising this work, and " +
+      "wait for their answer — delivered to them directly (e.g. a push " +
+      "notification to their phone via Telegram), not just written to a file or " +
+      "left as a note. Use this whenever the objective itself asks you to ask, " +
+      "check with, confirm with, or get input from them about anything, no matter " +
+      "how small — that instruction is what makes it not a routine choice you are " +
+      "equipped to make yourself — and for any other genuine fork in the road with " +
+      "real consequences where you cannot pick confidently on your own. This call " +
+      "blocks until answered; there is no other way to actually reach them from " +
+      "here, so do not substitute your own guess or a comment explaining that you " +
+      "can't reach them.",
     RequestDecisionInput.shape,
     async (input: RequestDecisionInputT) => {
       const resolution = await callbacks.requestDecision(input);

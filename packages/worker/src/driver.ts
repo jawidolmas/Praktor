@@ -51,7 +51,7 @@ export interface WorkerPrompt {
   checkpointNote?: string;
 }
 
-function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
+export function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
   const parts: string[] = [];
 
   if (briefing) {
@@ -59,6 +59,15 @@ function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
   }
 
   parts.push(prompt.intent);
+
+  parts.push(
+    "\nIf the above asks you to ask, check with, confirm with, or notify the " +
+      "person supervising this work about anything — even something as small as " +
+      "a content choice — call request_decision. It reaches them directly (e.g. a " +
+      "push notification to their phone) and blocks until they answer. You have " +
+      "no other way to actually reach them, so do not guess on their behalf or " +
+      "write a note saying you can't; call the tool.",
+  );
 
   if (prompt.ruledOut.length > 0) {
     parts.push(

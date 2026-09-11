@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import { buildPrompt } from "./driver.js";
+
+/**
+ * Regression test for a real failure: a worker asked to "ask me a question
+ * in telegram" searched for a matching tool, never found `request_decision`
+ * (its description didn't contain any word the worker searched for), and
+ * gave up — writing a placeholder file and explaining it had no way to
+ * reach the person, instead of just calling the tool that exists for
+ * exactly this. The prompt itself naming `request_decision` by its exact
+ * tool name is what makes it findable regardless of search wording.
+ */
+describe("buildPrompt", () => {
+  it("always tells the worker request_decision exists and when to use it", () => {
+    const prompt = buildPrompt({ intent: "Do something", ruledOut: [] }, "");
+    expect(prompt).toContain("request_decision");
+    expect(prompt.toLowerCase()).toContain("check with");
+  });
+
+  it("still includes the intent, ruled-out list, and checkpoint note", () => {
+    const prompt = buildPrompt(
+      { intent: "Do something", ruledOut: ["approach A"], checkpointNote: "carried over" },
+      "briefing text",
+    );
+    expect(prompt).toContain("briefing text");
+    expect(prompt).toContain("Do something");
+    expect(prompt).toContain("approach A");
+    expect(prompt).toContain("carried over");
+  });
+});
