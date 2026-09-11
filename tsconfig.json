@@ -8,6 +8,7 @@
     { "path": "./packages/worker" },
     { "path": "./apps/cli" },
     { "path": "./apps/web" },
-    { "path": "./apps/daemon" }
+    { "path": "./apps/daemon" },
+    { "path": "./apps/site" }
   ]
 }

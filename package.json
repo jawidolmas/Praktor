@@ -32,6 +32,7 @@
     "db:migrate": "tsx packages/db/src/migrate.ts",
     "exec": "tsx apps/cli/src/index.ts",
     "dashboard": "tsx apps/web/src/index.ts",
+    "site": "tsx apps/site/src/index.ts",
     "daemon": "tsx apps/daemon/src/index.ts"
   },
   "devDependencies": {
