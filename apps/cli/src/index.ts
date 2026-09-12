@@ -2,6 +2,12 @@
 import { answerDecision, cancelObjective, openDb, runMigrations } from "@exec/db";
 import { approveObjective } from "./approve.js";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
+import {
+  AUTOSTART_MODE_EXPLANATIONS,
+  autostartStatus,
+  installAutostart,
+  uninstallAutostart,
+} from "./autostart.js";
 import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.js";
 import { printEvents } from "./events.js";
 import { inferCheck } from "./infer.js";
@@ -19,6 +25,8 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
   exec-agent approve <objective-id>
   exec-agent abandon <objective-id>
   exec-agent daemon start|stop|status
+  exec-agent daemon install-autostart --mode logon|boot
+  exec-agent daemon uninstall-autostart
 
 "do" is the quick path: say what you want, name the repo somewhere in the
 sentence (it's matched against git repos under ~/Desktop — set
@@ -65,7 +73,16 @@ Options for "run" (and overrides for "do"):
 survives this terminal closing); "do"/"run" also do this automatically, so
 you rarely need it directly. "daemon stop" asks it to exit — any task it was
 mid-attempt on resumes from its last completed attempt next time a daemon
-starts. "daemon status" reports whether one is running and its pid.
+starts. "daemon status" reports whether one is running, its pid, and whether
+autostart is registered.
+
+Surviving the terminal closing isn't the same as surviving the machine
+rebooting — "daemon install-autostart" registers a scheduled task so the
+daemon comes back on its own. "--mode logon" starts it next time you log in
+(no special privileges needed); "--mode boot" starts it as Windows comes up,
+before anyone logs in (needs an elevated/Administrator terminal to register).
+Re-running it with a different --mode switches which one is registered.
+"daemon uninstall-autostart" removes it.
 
 "decide" answers an open decision from any terminal, not necessarily the one
 watching the objective — useful once you've walked away. The dashboard can
@@ -291,9 +308,37 @@ async function runDaemon(argv: string[]): Promise<void> {
   if (sub === "status") {
     const status = daemonStatus();
     console.log(status.running ? `Running (pid ${status.pid}).` : "Not running.");
+    const auto = autostartStatus();
+    console.log(
+      auto.installed
+        ? `Autostart: registered (${auto.mode ?? "unrecognized trigger"}).`
+        : "Autostart: not installed — the daemon will not come back after a reboot. Set it up " +
+          "with: exec-agent daemon install-autostart --mode logon|boot",
+    );
     return;
   }
-  console.error("usage: exec-agent daemon start|stop|status");
+  if (sub === "install-autostart") {
+    const { flags } = parseArgs(argv.slice(1));
+    const mode = flags.get("mode")?.[0];
+    if (mode !== "logon" && mode !== "boot") {
+      console.log("Choose how the daemon should start on its own:\n");
+      console.log(`  logon   ${AUTOSTART_MODE_EXPLANATIONS.logon}`);
+      console.log(`  boot    ${AUTOSTART_MODE_EXPLANATIONS.boot}\n`);
+      console.log("exec-agent daemon install-autostart --mode logon|boot");
+      process.exitCode = 1;
+      return;
+    }
+    const result = installAutostart(mode);
+    console.log(result.message);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+  if (sub === "uninstall-autostart") {
+    const result = uninstallAutostart();
+    console.log(result.message);
+    return;
+  }
+  console.error("usage: exec-agent daemon start|stop|status|install-autostart|uninstall-autostart");
   process.exitCode = 1;
 }
 

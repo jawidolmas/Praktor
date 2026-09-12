@@ -41,12 +41,25 @@ const daemonEntry = join(
  * specifically so a path containing spaces or quotes never has to survive
  * being embedded in a hand-built command-line string at all.
  */
-function spawnDaemonWindows(tsxCli: string): void {
+
+/**
+ * (Re)write the hidden launcher batch file and return its path — shared by a
+ * one-off `daemon start` and a registered autostart scheduled task, so both
+ * launch the daemon exactly the same way instead of two hand-maintained
+ * copies of the same quoting-sensitive command line drifting apart.
+ */
+export function writeDaemonLauncher(): string {
+  const require = createRequire(import.meta.url);
+  const tsxCli = require.resolve("tsx/cli");
   const log = logFilePath();
   const launcherPath = join(dirname(log), "daemon-launch.cmd");
   const batContent = `@echo off\r\n"${process.execPath}" "${tsxCli}" "${daemonEntry}" >> "${log}" 2>&1\r\n`;
   writeFileSync(launcherPath, batContent, "utf8");
+  return launcherPath;
+}
 
+function spawnDaemonWindows(): void {
+  const launcherPath = writeDaemonLauncher();
   const script = `Start-Process -FilePath '${launcherPath.replace(/'/g, "''")}' -WindowStyle Hidden`;
   const encoded = Buffer.from(script, "utf16le").toString("base64");
   const child = spawn(
@@ -67,12 +80,11 @@ function spawnDaemonPosix(tsxCli: string): void {
 }
 
 function spawnDaemon(): void {
-  const require = createRequire(import.meta.url);
-  const tsxCli = require.resolve("tsx/cli");
   if (process.platform === "win32") {
-    spawnDaemonWindows(tsxCli);
+    spawnDaemonWindows();
   } else {
-    spawnDaemonPosix(tsxCli);
+    const require = createRequire(import.meta.url);
+    spawnDaemonPosix(require.resolve("tsx/cli"));
   }
 }
 

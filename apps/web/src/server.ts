@@ -7,6 +7,7 @@ import {
   answerOpenDecision,
   approveObjective,
   getApprovalStatus,
+  getDaemonStatus,
   getObjective,
   getObjectiveEvents,
   listObjectives,
@@ -137,6 +138,10 @@ export function createDashboardServer(db: Db) {
         return applied
           ? sendJson(res, 200, { ok: true })
           : sendJson(res, 409, { ok: false, error: "already answered, or no such decision" });
+      }
+
+      if (path === "/api/daemon") {
+        return sendJson(res, 200, getDaemonStatus());
       }
 
       if (path === "/api/objectives") {

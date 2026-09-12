@@ -3,14 +3,17 @@ import {
   acceptedRun,
   answerDecision,
   appendEvent,
+  autostartStatus,
   decisions,
   events,
+  findRunningDaemon,
   markObjectiveMerged,
   objectives,
   policies,
   readEvents,
   runs,
   tasks,
+  type AutostartStatus,
   type Db,
 } from "@exec/db";
 import { attemptBranchName, computeApprovalDiff, mergeAndPush } from "@exec/worker";
@@ -25,6 +28,28 @@ import { describeEvent } from "./format.js";
  * doesn't own the decision), which is exactly what makes it possible to
  * answer one from here instead of only from the terminal that submitted it.
  */
+
+export interface DaemonStatusInfo {
+  running: boolean;
+  pid?: number;
+  autostart: AutostartStatus;
+}
+
+/** Whether the daemon is actually running right now, and whether it's
+ *  registered to come back on its own after a reboot — the second half is
+ *  what "walk away for three days" depends on, and there's otherwise no way
+ *  to tell from the dashboard that it was never set up at all. Not a DB
+ *  read at all (it's OS process/Task-Scheduler state), unlike everything
+ *  else in this file — still lives here so the server's route handlers all
+ *  go through the one module. */
+export function getDaemonStatus(): DaemonStatusInfo {
+  const pid = findRunningDaemon();
+  return {
+    running: pid !== undefined,
+    ...(pid !== undefined ? { pid } : {}),
+    autostart: autostartStatus(),
+  };
+}
 
 export interface ObjectiveSummary {
   id: string;

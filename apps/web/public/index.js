@@ -1,3 +1,21 @@
+function renderDaemonStatus(data) {
+  const el = document.getElementById("daemon-status");
+  const runningBadge = data.running
+    ? `<span class="badge status-running">running${data.pid ? ` (pid ${data.pid})` : ""}</span>`
+    : `<span class="badge status-failed">not running</span>`;
+
+  const auto = data.autostart;
+  const autostartBadge = auto.installed
+    ? `<span class="badge status-done">autostart: ${escapeHtml(auto.mode || "registered")}</span>`
+    : `<span class="badge status-failed">autostart: not installed</span>`;
+
+  const hint = auto.installed
+    ? ""
+    : `<div class="muted">Won't come back after a reboot. Set it up with: <code>exec-agent daemon install-autostart --mode logon|boot</code></div>`;
+
+  el.innerHTML = `<div>${runningBadge} ${autostartBadge}</div>${hint}`;
+}
+
 function renderObjectives(rows) {
   const el = document.getElementById("objectives");
   if (rows.length === 0) {
@@ -70,11 +88,13 @@ function renderPolicies(rows) {
 }
 
 async function refresh() {
-  const [objectives, decisions, policies] = await Promise.all([
+  const [daemon, objectives, decisions, policies] = await Promise.all([
+    fetchJSON("/api/daemon"),
     fetchJSON("/api/objectives"),
     fetchJSON("/api/decisions"),
     fetchJSON("/api/policies"),
   ]);
+  renderDaemonStatus(daemon);
   renderObjectives(objectives);
   renderDecisions(decisions);
   renderPolicies(policies);
