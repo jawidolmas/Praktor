@@ -19,8 +19,20 @@ import { buildRepoBriefing, renderBriefing } from "./briefing.js";
  * Deliberately not a full worker session: no worktree, no supervisor tools,
  * no policy hook, and file-mutating tools are disallowed outright rather than
  * merely policed — a planning call has no legitimate reason to touch the
- * repo, so there is nothing to negotiate.
+ * repo, so there is nothing to negotiate. That's also why this runs with
+ * `bypassPermissions` rather than `driver.ts`'s `default` + policy hook: with
+ * no hook installed to answer them, "default" leaves every tool call — even
+ * a harmless Read — waiting on a permission prompt nothing will ever answer
+ * inside a headless daemon. Confirmed live: that hang doesn't just stall this
+ * one objective, it wedges the whole daemon, since the main loop awaits
+ * planning before it will look at anything else. `disallowedTools` is what
+ * actually keeps this safe to bypass — the tools that would matter are never
+ * reachable in the first place. The wall-clock budget below is the backstop
+ * for any *other* way a brain call could hang: this must always eventually
+ * give up and fall back, never sit blocking the daemon indefinitely.
  */
+
+const PLANNING_TIMEOUT_MS = 3 * 60_000;
 
 export interface DecomposeArgs {
   title: string;
@@ -76,11 +88,14 @@ export async function decompose(args: DecomposeArgs): Promise<DecomposeResult> {
   });
 
   const briefing = renderBriefing(buildRepoBriefing(args.repoPath));
+  const abortController = new AbortController();
   const options: Options = {
     cwd: args.repoPath,
     model: args.model,
-    permissionMode: "default",
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
     maxTurns: 8,
+    abortController,
     disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash"],
     mcpServers: { planner: plannerServer },
   };
@@ -88,6 +103,11 @@ export async function decompose(args: DecomposeArgs): Promise<DecomposeResult> {
   const q = query({ prompt: buildPlannerPrompt(args, briefing), options });
 
   let stopping = false;
+  const timeout = setTimeout(() => {
+    stopping = true;
+    abortController.abort();
+  }, PLANNING_TIMEOUT_MS);
+
   try {
     for await (const msg of q) {
       if (msg.type === "result") break;
@@ -100,6 +120,8 @@ export async function decompose(args: DecomposeArgs): Promise<DecomposeResult> {
     }
   } catch (err) {
     if (!stopping) throw err;
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!captured) {
