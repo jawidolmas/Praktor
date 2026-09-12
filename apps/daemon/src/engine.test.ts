@@ -87,15 +87,21 @@ describe("handlePermanentFailure", () => {
     expect(raised[0]).toMatchObject({ level: "L3", status: "open", recommendation: "B" });
   });
 
-  it("abandon: fails the task, cascades dependents, and fails the objective immediately", () => {
+  it("abandon: fails the task, abandons the rest of the objective (dependents and unrelated siblings alike), and fails the objective immediately", () => {
     const objective = addObjective("abandon");
     const task = addTask(objective.id, "T-001");
     const dependent = addTask(objective.id, "T-002", [task.id]);
+    const unrelated = addTask(objective.id, "T-003"); // no dependency relationship to T-001 at all
 
     handlePermanentFailure(db, task, objective);
 
     expect(db.select().from(tasks).where(eq(tasks.id, task.id)).get()?.status).toBe("failed");
     expect(db.select().from(tasks).where(eq(tasks.id, dependent.id)).get()?.status).toBe("abandoned");
+    // Regression: "abandon" used to only cascade from the failed task to its
+    // own dependents, leaving an unrelated sibling task sitting in "pending"
+    // forever — never run, never abandoned, just orphaned once the objective
+    // itself went terminal and stopped being scheduled at all.
+    expect(db.select().from(tasks).where(eq(tasks.id, unrelated.id)).get()?.status).toBe("abandoned");
     expect(db.select().from(objectives).where(eq(objectives.id, objective.id)).get()?.status).toBe(
       "failed",
     );
@@ -136,16 +142,21 @@ describe("applyAnsweredFailureDecisions", () => {
       .run();
   }
 
-  it('"A" (abandon) fails the task, cascades dependents, and fails the objective', () => {
+  it('"A" (abandon) fails the task, abandons the rest of the objective (dependents and unrelated siblings alike), and fails the objective', () => {
     const objective = addObjective("escalate");
     const task = addTask(objective.id, "T-001");
     const dependent = addTask(objective.id, "T-002", [task.id]);
+    const unrelated = addTask(objective.id, "T-003");
     raiseAndAnswer(objective, task, "A");
 
     applyAnsweredFailureDecisions(db);
 
     expect(db.select().from(tasks).where(eq(tasks.id, task.id)).get()?.status).toBe("failed");
     expect(db.select().from(tasks).where(eq(tasks.id, dependent.id)).get()?.status).toBe("abandoned");
+    // Regression: an unrelated sibling task used to be left in "pending"
+    // forever — the objective goes terminal and stops being scheduled at
+    // all, so nothing would ever have picked it back up.
+    expect(db.select().from(tasks).where(eq(tasks.id, unrelated.id)).get()?.status).toBe("abandoned");
     expect(db.select().from(objectives).where(eq(objectives.id, objective.id)).get()?.status).toBe(
       "failed",
     );

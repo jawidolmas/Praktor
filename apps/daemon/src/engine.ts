@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
 import { newId, newSessionId, type EffortLevel, type TokenUsage } from "@exec/core";
 import {
+  abandonAllTasks,
   activePolicies,
   addRuledOut,
   answerDecision,
@@ -498,12 +499,16 @@ export function handlePermanentFailure(db: Db, task: TaskRow, objective: Objecti
   }
 
   setTaskStatus(db, task.id, "failed", `exhausted ${task.maxAttempts} attempt(s)`);
-  cascadeAbandon(db, task.id);
   if (objective.onFailure === "abandon") {
+    // The whole objective goes down with it — every task, not just this
+    // one's dependents (see abandonAllTasks).
+    abandonAllTasks(db, objective.id, `${task.key} failed permanently — objective abandoned`);
     setObjectiveStatus(db, objective.id, "failed", `${task.key} failed permanently`);
+  } else {
+    // "skip": only what actually depended on this task is lost; everything
+    // else still has a path to "done" via reconcileObjective.
+    cascadeAbandon(db, task.id);
   }
-  // "skip": the objective's status is left for reconcileObjective to derive
-  // — it lands on "done" once every remaining task is done or abandoned.
 }
 
 /**
@@ -610,7 +615,9 @@ export function applyAnsweredFailureDecisions(db: Db): void {
 
     if (decision.answer === "A") {
       setTaskStatus(db, task.id, "failed", `abandoned via ${decision.key}`);
-      cascadeAbandon(db, task.id);
+      // The whole objective, not just this task's dependents — "Abandon the
+      // objective" promised "everything else in it is dropped too."
+      abandonAllTasks(db, objective.id, `abandoned via ${decision.key}`);
       setObjectiveStatus(db, objective.id, "failed", `abandoned via ${decision.key}`);
     } else if (decision.answer === "B") {
       db.update(tasks)

@@ -402,6 +402,31 @@ export function createTasksFromPlan(db: Db, args: CreateTasksFromPlanArgs): Task
 }
 
 /**
+ * Mark every not-yet-finished task in an objective "abandoned" — the shared
+ * core of "call the whole thing off," used both by an explicit user abandon
+ * and by the engine when a permanent task failure takes the whole objective
+ * down with it (onFailure "abandon", or an "A" answer to an escalation).
+ *
+ * Deliberately every task in the objective, not just the failed one's
+ * dependents (`cascadeAbandon`): a task with no dependency relationship to
+ * the one that failed — a sibling branch of the graph — still has nowhere to
+ * go once the objective itself is terminal, since `schedulableObjectives`
+ * excludes it from ever being picked up again. Confirmed live: without this,
+ * abandoning an objective over one failed task left its unrelated sibling
+ * tasks sitting in "pending"/"ready" forever — not abandoned, not run, just
+ * silently orphaned, contradicting exactly what "abandon the objective —
+ * everything else in it is dropped too" is supposed to mean.
+ */
+export function abandonAllTasks(db: Db, objectiveId: string, reason: string): void {
+  const NON_TERMINAL_TASK = new Set(["pending", "ready", "running", "verifying", "blocked", "parked"]);
+  for (const task of db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all()) {
+    if (NON_TERMINAL_TASK.has(task.status)) {
+      setTaskStatus(db, task.id, "abandoned", reason);
+    }
+  }
+}
+
+/**
  * The explicit "I'm calling this off" path — the "or explicitly abandoned by
  * the user" clause of the objective guarantee, which otherwise has no code
  * path at all. Marks every task not already finished as "abandoned" rather
@@ -417,12 +442,7 @@ export function cancelObjective(db: Db, objectiveId: string): boolean {
   const TERMINAL_OBJECTIVE = new Set(["done", "failed", "cancelled"]);
   if (TERMINAL_OBJECTIVE.has(objective.status)) return false;
 
-  const NON_TERMINAL_TASK = new Set(["pending", "ready", "running", "verifying", "blocked", "parked"]);
-  for (const task of db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all()) {
-    if (NON_TERMINAL_TASK.has(task.status)) {
-      setTaskStatus(db, task.id, "abandoned", "objective abandoned by user");
-    }
-  }
+  abandonAllTasks(db, objectiveId, "objective abandoned by user");
   setObjectiveStatus(db, objectiveId, "cancelled", "abandoned by user");
   return true;
 }
