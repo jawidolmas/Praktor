@@ -30,9 +30,18 @@ import { buildRepoBriefing, renderBriefing } from "./briefing.js";
  * reachable in the first place. The wall-clock budget below is the backstop
  * for any *other* way a brain call could hang: this must always eventually
  * give up and fall back, never sit blocking the daemon indefinitely.
+ *
+ * `effort` is set explicitly to "medium" — every other call site in this
+ * codebase does the same, and leaving it unset here was itself a bug: a
+ * live run against a real, doc-heavy repo showed the SDK defaulting to
+ * "xhigh" with no effort specified, burning 5,000+ thinking tokens per turn
+ * on a task that only needs to skim a handful of files and propose a list —
+ * it ran past both maxTurns and the wall-clock budget without ever reaching
+ * submit_plan, purely from that reasoning overhead, not from any tool
+ * discovery problem.
  */
 
-const PLANNING_TIMEOUT_MS = 3 * 60_000;
+const PLANNING_TIMEOUT_MS = 5 * 60_000;
 
 export interface DecomposeArgs {
   title: string;
@@ -58,6 +67,10 @@ const PLANNER_INSTRUCTIONS =
   "- Keep tasks as small as you can while each stays independently verifiable — several " +
   "small tasks recover from one bad attempt far better than one large task does.\n" +
   "- If the objective is genuinely a single indivisible step, return exactly one task.\n" +
+  "You have a limited number of turns for this — skim only what you need to plan " +
+  "confidently (the files the objective itself points at, plus anything they reference), " +
+  "not every file in the repo. A good plan from a quick, targeted look beats no plan " +
+  "because time ran out on a thorough one.\n" +
   "Call submit_plan exactly once, when the graph is ready. Do not edit, write, or run " +
   "anything — you are only planning, not implementing.";
 
@@ -92,9 +105,10 @@ export async function decompose(args: DecomposeArgs): Promise<DecomposeResult> {
   const options: Options = {
     cwd: args.repoPath,
     model: args.model,
+    effort: "medium",
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
-    maxTurns: 8,
+    maxTurns: 20,
     abortController,
     disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash"],
     mcpServers: { planner: plannerServer },
