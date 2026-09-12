@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { newId } from "@exec/core";
 import { openDb, type Db } from "./client.js";
 import { runMigrations } from "./migrate.js";
-import { decisions, objectives, runs, tasks } from "./schema.js";
+import { artifacts, decisions, objectives, runs, tasks } from "./schema.js";
 import {
   acceptedRun,
   activeObjectives,
@@ -26,6 +26,8 @@ import {
   setSetting,
   setTaskStatus,
   unnotifiedDecisions,
+  writeArtifact,
+  type TaskResultContent,
 } from "./store.js";
 
 const BUDGET = { maxTurns: 40, maxTokens: 400_000, maxWallClockMs: 1_800_000 };
@@ -582,5 +584,128 @@ describe("cancelObjective", () => {
 
   it("returns false for an unknown objective", () => {
     expect(cancelObjective(db, "no-such-id")).toBe(false);
+  });
+});
+
+describe("objective completion report", () => {
+  function taskResult(overrides: Partial<TaskResultContent> = {}): TaskResultContent {
+    return { status: "done", branch: null, worktreePath: null, committed: false, attempts: 1, ...overrides };
+  }
+
+  function objectiveReport(): string {
+    const row = db
+      .select()
+      .from(artifacts)
+      .where(eq(artifacts.objectiveId, objectiveId))
+      .all()
+      .filter((a) => a.kind === "report" && a.taskId === null)
+      .pop();
+    expect(row).toBeDefined();
+    expect(typeof row!.content).toBe("string");
+    return row!.content as string;
+  }
+
+  it("is written exactly once, the moment the objective reaches a terminal status", () => {
+    const a = addTask("T-001");
+    setTaskStatus(db, a, "done");
+
+    expect(
+      db
+        .select()
+        .from(artifacts)
+        .where(eq(artifacts.objectiveId, objectiveId))
+        .all()
+        .filter((row) => row.kind === "report" && row.taskId === null),
+    ).toHaveLength(0);
+
+    reconcileObjective(db, objectiveId); // the transition into "done" happens here
+    reconcileObjective(db, objectiveId); // already terminal — must not write a second one
+
+    expect(
+      db
+        .select()
+        .from(artifacts)
+        .where(eq(artifacts.objectiveId, objectiveId))
+        .all()
+        .filter((row) => row.kind === "report" && row.taskId === null),
+    ).toHaveLength(1);
+  });
+
+  it("is distinguishable from a per-task report by having no taskId", () => {
+    const a = addTask("T-001");
+    writeArtifact(db, { kind: "report", content: "per-task prose report", objectiveId, taskId: a });
+    setTaskStatus(db, a, "done");
+    reconcileObjective(db, objectiveId);
+
+    const content = objectiveReport();
+    expect(content).not.toBe("per-task prose report");
+    expect(content).toContain("test objective");
+  });
+
+  it("summarizes every task's final status and which ones left committed, mergeable work", () => {
+    const a = addTask("T-001");
+    const b = addTask("T-002");
+    const c = addTask("T-003");
+    writeArtifact(db, {
+      kind: "task_result",
+      objectiveId,
+      taskId: a,
+      content: taskResult({ branch: "task/t-001", committed: true }),
+    });
+    writeArtifact(db, {
+      kind: "task_result",
+      objectiveId,
+      taskId: b,
+      content: taskResult({ status: "failed", committed: false }),
+    });
+    setTaskStatus(db, a, "done");
+    setTaskStatus(db, b, "failed");
+    setTaskStatus(db, c, "abandoned");
+    db.update(objectives).set({ onFailure: "skip" }).where(eq(objectives.id, objectiveId)).run();
+    reconcileObjective(db, objectiveId);
+
+    const content = objectiveReport();
+    expect(content).toContain("T-001");
+    expect(content).toContain("task/t-001");
+    expect(content).toContain("Ready to review/merge");
+    // T-002 failed with nothing committed — it must not show up as mergeable.
+    const mergeSection = content.slice(content.indexOf("Ready to review/merge"));
+    expect(mergeSection).not.toContain("T-002");
+  });
+
+  it("says plainly that there is nothing to merge when no task committed anything", () => {
+    const a = addTask("T-001");
+    setTaskStatus(db, a, "failed");
+    reconcileObjective(db, objectiveId);
+
+    expect(objectiveReport()).toContain("Nothing to merge");
+  });
+
+  it("uses only the most recent task_result when a task ran more than once", () => {
+    const a = addTask("T-001");
+    writeArtifact(db, {
+      kind: "task_result",
+      objectiveId,
+      taskId: a,
+      content: taskResult({ branch: "task/first-try", committed: false }),
+    });
+    // Both writes otherwise risk landing in the same millisecond, which would
+    // make "most recent by createdAt" an unreliable way to tell them apart.
+    const start = Date.now();
+    while (Date.now() === start) {
+      /* advance the clock by at least 1ms */
+    }
+    writeArtifact(db, {
+      kind: "task_result",
+      objectiveId,
+      taskId: a,
+      content: taskResult({ branch: "task/second-try", committed: true }),
+    });
+    setTaskStatus(db, a, "done");
+    reconcileObjective(db, objectiveId);
+
+    const content = objectiveReport();
+    expect(content).toContain("task/second-try");
+    expect(content).not.toContain("task/first-try");
   });
 });

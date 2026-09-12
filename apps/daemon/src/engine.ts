@@ -20,6 +20,7 @@ import {
   writeArtifact,
   type Db,
   type ObjectiveRow,
+  type TaskResultContent,
   type TaskRow,
 } from "@exec/db";
 import {
@@ -462,6 +463,25 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
       handlePermanentFailure(db, task, objective);
     }
   }
+
+  // Written before reconcileObjective (not after, alongside the prose report
+  // below) so that if finishing this task is what completes the whole graph,
+  // the objective-level summary reconcileObjective triggers can already see
+  // this task's own branch/commit outcome instead of missing exactly the
+  // task that just finished.
+  const taskResult: TaskResultContent = {
+    status: finalStatus,
+    branch: lastWorktree?.branch ?? null,
+    worktreePath: lastWorktree?.path ?? null,
+    committed,
+    attempts: attempts.length,
+  };
+  writeArtifact(db, {
+    kind: "task_result",
+    content: taskResult,
+    objectiveId: objective.id,
+    taskId: task.id,
+  });
 
   // The objective's status is no longer just mirrored from this one task —
   // see reconcileObjective for why: with a real task graph, an objective is

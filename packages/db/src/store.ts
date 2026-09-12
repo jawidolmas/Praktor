@@ -193,6 +193,9 @@ export function draftObjectives(db: Db): ObjectiveRow[] {
     .all();
 }
 
+/** An objective never leaves one of these once it reaches one. */
+const TERMINAL_OBJECTIVE_STATUSES = new Set(["done", "failed", "cancelled"]);
+
 /**
  * Derive an objective's status purely from the current state of its tasks —
  * the fix for what used to be `setObjectiveStatus(db, objective.id,
@@ -206,8 +209,7 @@ export function draftObjectives(db: Db): ObjectiveRow[] {
 export function reconcileObjective(db: Db, objectiveId: string): void {
   const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
   if (!objective) return;
-  const TERMINAL_OBJECTIVE = new Set(["done", "failed", "cancelled"]);
-  if (TERMINAL_OBJECTIVE.has(objective.status)) return;
+  if (TERMINAL_OBJECTIVE_STATUSES.has(objective.status)) return;
 
   const all = db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all();
   // Still being planned (a "draft" objective with no tasks yet) — nothing to
@@ -439,8 +441,7 @@ export function abandonAllTasks(db: Db, objectiveId: string, reason: string): vo
 export function cancelObjective(db: Db, objectiveId: string): boolean {
   const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
   if (!objective) return false;
-  const TERMINAL_OBJECTIVE = new Set(["done", "failed", "cancelled"]);
-  if (TERMINAL_OBJECTIVE.has(objective.status)) return false;
+  if (TERMINAL_OBJECTIVE_STATUSES.has(objective.status)) return false;
 
   abandonAllTasks(db, objectiveId, "objective abandoned by user");
   setObjectiveStatus(db, objectiveId, "cancelled", "abandoned by user");
@@ -470,6 +471,126 @@ export function setObjectiveStatus(
       ...(reason === undefined ? {} : { reason }),
     },
   });
+
+  // This is the one place every path into a terminal status passes through
+  // (reconcileObjective, an L3 decision being applied, an explicit user
+  // cancel), so it's the one place a final report can be written exactly
+  // once per objective, regardless of which of those paths got it there.
+  if (TERMINAL_OBJECTIVE_STATUSES.has(status)) {
+    writeObjectiveReport(db, objectiveId);
+  }
+}
+
+/**
+ * What a finished attempt at a task actually produced, beyond just its
+ * status — written by the daemon (`apps/daemon/src/engine.ts`) as a
+ * "task_result" artifact alongside the human-readable per-task "report" one.
+ * Kept separate from that prose report (rather than trying to parse it back
+ * out) specifically so the objective-level summary below can answer "which
+ * branches actually have committed work" without scraping free text.
+ */
+export interface TaskResultContent {
+  status: string;
+  branch: string | null;
+  worktreePath: string | null;
+  committed: boolean;
+  attempts: number;
+}
+
+function isTaskResultContent(x: unknown): x is TaskResultContent {
+  return typeof x === "object" && x !== null && "status" in x && "committed" in x;
+}
+
+/**
+ * Confirmed live: with only per-task reports, the last one written stomps
+ * whatever the CLI's `watch` shows once an objective ends — for a multi-task
+ * objective, that's whichever task's attempt happened to finish last, not a
+ * picture of the whole graph. A user who had answered a dozen decisions
+ * across a 9-task run saw one task's failure report and had no way to tell
+ * that several other tasks had actually finished with real, committed work
+ * sitting on their own branches. This renders the whole graph instead: every
+ * task's final status, and — for any task that actually ran — whether it left
+ * something behind worth reviewing or merging.
+ */
+function renderObjectiveReport(
+  objective: ObjectiveRow,
+  taskRows: TaskRow[],
+  results: Map<string, TaskResultContent>,
+): string {
+  const lines: string[] = [];
+  const count = (s: string) => taskRows.filter((t) => t.status === s).length;
+  const done = count("done");
+  const failed = count("failed");
+  const abandoned = count("abandoned");
+  const other = taskRows.length - done - failed - abandoned;
+
+  lines.push("");
+  lines.push("#".repeat(72));
+  lines.push(`# ${objective.title}`);
+  lines.push("#".repeat(72));
+  lines.push(`Status:  ${objective.status.toUpperCase()}`);
+  lines.push(
+    `Tasks:   ${taskRows.length} total — ${done} done, ${failed} failed, ${abandoned} abandoned` +
+      (other > 0 ? `, ${other} still open` : ""),
+  );
+  lines.push("");
+  lines.push("## Tasks");
+  for (const t of taskRows) {
+    const result = results.get(t.id);
+    lines.push(`  [${t.status.toUpperCase()}] ${t.key} — ${t.title}`);
+    if (result) {
+      lines.push(
+        `      attempts: ${result.attempts}` +
+          (result.branch ? `   branch: ${result.branch}   committed: ${result.committed ? "yes" : "no"}` : ""),
+      );
+    }
+  }
+
+  const mergeable = taskRows.filter((t) => {
+    const result = results.get(t.id);
+    return t.status === "done" && result?.committed && result.branch;
+  });
+  lines.push("");
+  if (mergeable.length > 0) {
+    lines.push("## Ready to review/merge");
+    for (const t of mergeable) {
+      lines.push(`  ${t.key}: branch ${results.get(t.id)!.branch}`);
+    }
+  } else {
+    lines.push("Nothing to merge — no task in this objective left committed changes on a branch.");
+  }
+  lines.push("");
+  lines.push("#".repeat(72));
+  lines.push("");
+  return lines.join("\n");
+}
+
+function writeObjectiveReport(db: Db, objectiveId: string): void {
+  const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+  if (!objective) return;
+  const taskRows = db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all();
+  if (taskRows.length === 0) return; // e.g. a draft objective cancelled before it was ever planned
+
+  const resultArtifacts = db
+    .select()
+    .from(artifacts)
+    .where(and(eq(artifacts.objectiveId, objectiveId), eq(artifacts.kind, "task_result")))
+    .orderBy(asc(artifacts.createdAt))
+    .all();
+  // A task can run more than once across retries or a "grant more attempts"
+  // decision — iterating oldest-first and overwriting means each id ends up
+  // mapped to its most recent attempt's result.
+  const latestByTask = new Map<string, TaskResultContent>();
+  for (const row of resultArtifacts) {
+    if (row.taskId && isTaskResultContent(row.content)) latestByTask.set(row.taskId, row.content);
+  }
+
+  const report = renderObjectiveReport(objective, taskRows, latestByTask);
+  // No taskId: this is what distinguishes the one objective-level report from
+  // the many per-task ones sharing the same kind, so a reader (`printFinalReport`
+  // in apps/cli) can ask for this one specifically instead of "whichever
+  // report artifact happens to be newest."
+  writeArtifact(db, { kind: "report", content: report, objectiveId });
 }
 
 export function setTaskStatus(

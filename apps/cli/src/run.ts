@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import {
   newId,
   taskKey,
@@ -196,10 +196,19 @@ async function handleDecisionPrompt(db: Db, key: string): Promise<void> {
 }
 
 function printFinalReport(db: Db, objectiveId: string): void {
+  // taskId IS NULL is what picks out the one objective-level summary (written
+  // by setObjectiveStatus in @exec/db) from among the many per-task reports
+  // sharing the same "report" kind. Without this, a multi-task objective
+  // would show whichever task's own report happened to be written last —
+  // confirmed live: that left a 9-task run's final print showing only one
+  // failed task's story, with no indication several others had actually
+  // finished with real, committed work on their own branches.
   const report = db
     .select()
     .from(artifacts)
-    .where(and(eq(artifacts.objectiveId, objectiveId), eq(artifacts.kind, "report")))
+    .where(
+      and(eq(artifacts.objectiveId, objectiveId), eq(artifacts.kind, "report"), isNull(artifacts.taskId)),
+    )
     .orderBy(desc(artifacts.createdAt))
     .limit(1)
     .get();
