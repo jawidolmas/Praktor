@@ -57,7 +57,23 @@ export function createWorktree(args: CreateWorktreeArgs): WorktreeHandle {
   mkdirSync(dirname(args.worktreePath), { recursive: true });
   // -B (re)creates the branch if it already exists, so a respawn under the same
   // branch name doesn't fail on a leftover from a killed attempt.
+  //
+  // `-c core.autocrlf=false` is a one-shot override for this single checkout,
+  // not a change to the repo's own config: without it, a machine with the
+  // (very common, Windows-default) global `core.autocrlf=true` checks these
+  // files out with CRLF line endings, while a worker's own editing tools
+  // write plain LF. An acceptance check that diffs "the file the worker just
+  // wrote" against "a reference file checked out here" then sees a spurious
+  // mismatch from line endings alone, on content that is otherwise identical
+  // — confirmed live as the likely cause of a task failing an otherwise
+  // correct attempt over and over. Forcing this checkout to match exactly
+  // what's committed (byte for byte, independent of the host's global git
+  // config) removes that whole class of false negatives at the source,
+  // rather than relying on every acceptance check anyone ever writes to know
+  // to route around it.
   git(args.repoPath, [
+    "-c",
+    "core.autocrlf=false",
     "worktree",
     "add",
     "-B",
