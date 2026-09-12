@@ -7,3 +7,5 @@ export * from "./checkpoint.js";
 export * from "./tools.js";
 export * from "./driver.js";
 export * from "./approve.js";
+export * from "./brain.js";
+export * from "./fallback-check.js";

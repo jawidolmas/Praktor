@@ -33,6 +33,18 @@ export const objectives = sqliteTable("objectives", {
   baseRef: text("base_ref").notNull().default("HEAD"),
   status: text("status").notNull().default("draft"),
   budget: text("budget", { mode: "json" }).$type<Budget>().notNull(),
+  // What to do when a task exhausts its attempts and can't be recovered
+  // mechanically: "escalate" (default) raises an L3 decision, "abandon" fails
+  // the objective outright, "skip" tolerates it and cascades the tasks that
+  // depended on it to "abandoned" so the rest of the objective can still finish.
+  onFailure: text("on_failure").notNull().default("escalate"),
+  // Defaults for every task this objective's tasks get created with. Needed
+  // even before a single task exists: an objective can sit in "draft"
+  // (submitted, awaiting decomposition) across a daemon restart, and the
+  // daemon reconstructs everything it needs from these rows alone.
+  model: text("model").notNull().default("claude-sonnet-5"),
+  effort: text("effort").notNull().default("medium"),
+  maxAttempts: integer("max_attempts").notNull().default(3),
   // Set once a human has reviewed the diff and merged it into the real repo
   // via `exec-agent approve` or the dashboard's Merge button. Distinct from
   // `status: "done"`, which only means the worker's own acceptance check

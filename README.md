@@ -11,11 +11,25 @@ coding itself.
 
 ## Status
 
-This is v0.1: **one task per objective**. There is no multi-task decomposition yet. What exists
-today:
+This is v0.1. What exists today:
 
-- Plain-English intake (`exec-agent do "..."`) that resolves the target repo and infers a
-  pass/fail check where it reasonably can.
+- Plain-English intake (`exec-agent do "..."`) that resolves the target repo, then routes the
+  sentence: an obviously single step ("add/create `<file>`") gets a real, specific check and
+  runs immediately; anything more open-ended is handed to the daemon's planner instead of
+  guessing at a check for a sentence too ambiguous to infer one from.
+- Multi-task decomposition: the planner (`decompose`, a one-shot brain call) breaks an open-ended
+  objective into a dependency-ordered task graph, each task independently verifiable by its own
+  acceptance checks — not one task per objective. An objective is "done" only once every task in
+  its graph is; a permanently failed task doesn't just fail the whole objective by default (see
+  `--on-failure` below).
+- A per-objective failure policy (`--on-failure escalate|abandon|skip`, default `escalate`): a
+  task that exhausts its attempts and can't be recovered mechanically raises a decision instead
+  of silently giving up, so a person decides whether to grant more attempts, abandon the
+  objective, or accept that one task's failure and let the rest finish. `abandon`/`skip` skip the
+  decision and apply that outcome directly, for objectives where you've already decided up front.
+- An explicit `exec-agent abandon <objective-id>` — an objective otherwise stays the daemon's
+  responsibility until it's done, failed, or a decision resolves it; this is the "call it off"
+  path, distinct from a task simply failing.
 - A persistent supervisor **daemon**: `do`/`run` submit an objective and return immediately —
   the daemon (started automatically if none is running) is what actually drives it, so closing
   the terminal, or the whole laptop, does not stop the work. Reattach any time with

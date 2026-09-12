@@ -1,4 +1,6 @@
-import type { AcceptanceCheck, EffortLevel } from "@exec/core";
+import type { AcceptanceCheck, EffortLevel, ObjectiveOnFailure } from "@exec/core";
+
+const VALID_ON_FAILURE = new Set<string>(["escalate", "abandon", "skip"]);
 
 /**
  * Argument parsing, split out from index.ts so it can be unit tested — index.ts
@@ -48,6 +50,11 @@ export function parseCheck(spec: string): AcceptanceCheck {
 
 /** Common run-shaping flags, shared by "run" and as overrides on "do". */
 export function readRunOptions(flags: Map<string, string[]>) {
+  const onFailure = flags.get("on-failure")?.[0] ?? "escalate";
+  if (!VALID_ON_FAILURE.has(onFailure)) {
+    throw new Error(`--on-failure must be one of escalate|abandon|skip, got "${onFailure}"`);
+  }
+
   return {
     model: flags.get("model")?.[0] ?? "claude-sonnet-5",
     // Real runs averaged 10.3 turns / 100s for one-line-file tasks, mostly
@@ -58,6 +65,10 @@ export function readRunOptions(flags: Map<string, string[]>) {
     maxAttempts: Number(flags.get("max-attempts")?.[0] ?? "3"),
     maxTurns: Number(flags.get("max-turns")?.[0] ?? "30"),
     maxWallClockMs: Number(flags.get("max-wall-clock-min")?.[0] ?? "20") * 60_000,
+    // What to do when a task exhausts its attempts and can't be recovered
+    // mechanically: raise a decision (default, safest), fail the objective
+    // outright, or tolerate it and continue without that task.
+    onFailure: onFailure as ObjectiveOnFailure,
   };
 }
 

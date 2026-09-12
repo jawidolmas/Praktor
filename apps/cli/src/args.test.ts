@@ -72,4 +72,19 @@ describe("readRunOptions", () => {
     expect(opts.model).toBe("claude-opus-5");
     expect(opts.maxTurns).toBe(5);
   });
+
+  it("defaults on-failure to escalate", () => {
+    expect(readRunOptions(new Map()).onFailure).toBe("escalate");
+  });
+
+  it("accepts the other two documented on-failure policies", () => {
+    expect(readRunOptions(new Map([["on-failure", ["abandon"]]])).onFailure).toBe("abandon");
+    expect(readRunOptions(new Map([["on-failure", ["skip"]]])).onFailure).toBe("skip");
+  });
+
+  it("rejects an on-failure value that isn't one of the three", () => {
+    expect(() => readRunOptions(new Map([["on-failure", ["retry-forever"]]]))).toThrow(
+      /on-failure/,
+    );
+  });
 });

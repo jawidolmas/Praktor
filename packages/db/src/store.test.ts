@@ -10,12 +10,17 @@ import {
   addRuledOut,
   answerDecision,
   appendEvent,
+  cancelObjective,
+  cascadeAbandon,
+  createTasksFromPlan,
+  draftObjectives,
   getSetting,
   markDecisionNotified,
   markObjectiveMerged,
   nextDecisionKey,
   readEvents,
   readyTasks,
+  reconcileObjective,
   schedulableObjectives,
   setObjectiveStatus,
   setSetting,
@@ -127,6 +132,29 @@ describe("answerDecision", () => {
   it("issues sequential, quotable keys", () => {
     expect(raise([])).toBe("DEC-001");
     expect(raise([])).toBe("DEC-002");
+  });
+
+  it("leaves an L3 decision's blocked task alone — only the daemon knows what its answer means", () => {
+    const blocked = addTask("T-001");
+    setTaskStatus(db, blocked, "blocked");
+    const key = nextDecisionKey(db);
+    db.insert(decisions)
+      .values({
+        id: newId(), key, objectiveId, taskId: blocked, level: "L3",
+        title: "T-001 failed permanently", context: "exhausted attempts",
+        risk: "medium", recommendation: "B",
+        options: [
+          { id: "A", label: "Abandon", pros: [], cons: [] },
+          { id: "B", label: "Grant more attempts", pros: [], cons: [] },
+        ],
+        blockedTaskIds: [blocked], status: "open", createdAt: Date.now(),
+      })
+      .run();
+
+    expect(answerDecision(db, { key, answer: "B", answeredBy: "ceo" })).toBe(true);
+    // Still "blocked" — applyAnsweredFailureDecisions (engine.ts) is what
+    // interprets an L3 answer, not the generic unblock above.
+    expect(db.select().from(tasks).where(eq(tasks.id, blocked)).get()?.status).toBe("blocked");
   });
 });
 
@@ -333,5 +361,226 @@ describe("markObjectiveMerged", () => {
     markObjectiveMerged(db, objectiveId);
     const row = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
     expect(row?.mergedAt).toBeTypeOf("number");
+  });
+});
+
+describe("draftObjectives", () => {
+  it("lists only draft objectives, oldest first", () => {
+    // objectiveId (from beforeEach) is "active" — it must not show up here.
+    const draft = newId();
+    db.insert(objectives)
+      .values({
+        id: draft, title: "needs planning", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "draft", budget: BUDGET,
+        createdAt: Date.now(), updatedAt: Date.now(),
+      })
+      .run();
+
+    expect(draftObjectives(db).map((o) => o.id)).toEqual([draft]);
+  });
+});
+
+describe("createTasksFromPlan", () => {
+  const PLAN = {
+    tasks: [
+      {
+        key: "T-001", title: "Audit auth", intent: "Look for vulnerabilities",
+        taskClass: "investigate" as const, dependsOn: [],
+        acceptance: { checks: [{ label: "notes exist", command: "true", expectExitCode: 0 }] },
+      },
+      {
+        key: "T-002", title: "Fix findings", intent: "Patch what T-001 found",
+        taskClass: "fix" as const, dependsOn: ["T-001"],
+        acceptance: { checks: [{ label: "tests pass", command: "npm test", expectExitCode: 0 }] },
+      },
+    ],
+  };
+
+  it("resolves human-readable dependsOn keys into real task ids, and seeds status from them", () => {
+    const draft = newId();
+    db.insert(objectives)
+      .values({
+        id: draft, title: "harden auth", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "draft", budget: BUDGET,
+        createdAt: Date.now(), updatedAt: Date.now(),
+      })
+      .run();
+
+    const written = createTasksFromPlan(db, {
+      objectiveId: draft, plan: PLAN, model: "claude-sonnet-5",
+      effort: "medium", maxAttempts: 3, budget: BUDGET,
+    });
+
+    const t1 = written.find((t) => t.key === "T-001")!;
+    const t2 = written.find((t) => t.key === "T-002")!;
+    expect(t1.status).toBe("ready"); // no deps
+    expect(t1.dependsOn).toEqual([]);
+    expect(t2.status).toBe("pending"); // depends on T-001, unmet
+    expect(t2.dependsOn).toEqual([t1.id]);
+
+    // The acceptance checks the planner wrote get a real timeoutMs default —
+    // DecomposeOutput's checks don't carry one.
+    expect(t1.acceptance.checks[0]?.timeoutMs).toBe(10 * 60_000);
+
+    const objective = db.select().from(objectives).where(eq(objectives.id, draft)).get();
+    expect(objective?.status).toBe("active");
+  });
+
+  it("is atomic: a duplicate key does not leave the objective half-planned", () => {
+    const draft = newId();
+    db.insert(objectives)
+      .values({
+        id: draft, title: "harden auth", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "draft", budget: BUDGET,
+        createdAt: Date.now(), updatedAt: Date.now(),
+      })
+      .run();
+    // Pre-seed a T-001 for this objective so the plan's insert collides.
+    db.insert(tasks)
+      .values({
+        id: newId(), objectiveId: draft, key: "T-001", title: "existing", intent: "x",
+        taskClass: "implement", acceptance: ACCEPTANCE, dependsOn: [], status: "pending",
+        attempts: 0, maxAttempts: 3, budget: BUDGET, model: "claude-sonnet-5", effort: "medium",
+        ruledOut: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+      .run();
+
+    expect(() =>
+      createTasksFromPlan(db, {
+        objectiveId: draft, plan: PLAN, model: "claude-sonnet-5",
+        effort: "medium", maxAttempts: 3, budget: BUDGET,
+      }),
+    ).toThrow();
+
+    // The transaction rolled back: still exactly the one pre-seeded task, and
+    // the objective is still "draft" — safe for the planner to retry.
+    expect(db.select().from(tasks).where(eq(tasks.objectiveId, draft)).all()).toHaveLength(1);
+    expect(db.select().from(objectives).where(eq(objectives.id, draft)).get()?.status).toBe("draft");
+  });
+});
+
+describe("cascadeAbandon", () => {
+  it("abandons everything downstream of a failed task, transitively", () => {
+    const a = addTask("T-001");
+    const b = addTask("T-002", [a]);
+    const c = addTask("T-003", [b]);
+    const unrelated = addTask("T-004");
+    setTaskStatus(db, a, "failed");
+
+    cascadeAbandon(db, a);
+
+    const rows = db.select().from(tasks).all();
+    expect(rows.find((t) => t.id === a)?.status).toBe("failed"); // unchanged — it failed, it wasn't abandoned
+    expect(rows.find((t) => t.id === b)?.status).toBe("abandoned");
+    expect(rows.find((t) => t.id === c)?.status).toBe("abandoned");
+    expect(rows.find((t) => t.id === unrelated)?.status).toBe("pending");
+  });
+
+  it("does not resurrect an already-finished dependent", () => {
+    const a = addTask("T-001");
+    const b = addTask("T-002", [a]);
+    setTaskStatus(db, b, "done"); // finished before its "dependency" failed — pathological, but must not be touched
+    setTaskStatus(db, a, "failed");
+
+    cascadeAbandon(db, a);
+    expect(db.select().from(tasks).where(eq(tasks.id, b)).get()?.status).toBe("done");
+  });
+});
+
+describe("reconcileObjective", () => {
+  it("never changes an objective already in a terminal state", () => {
+    addTask("T-001");
+    setObjectiveStatus(db, objectiveId, "cancelled");
+    reconcileObjective(db, objectiveId);
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "cancelled",
+    );
+  });
+
+  it("does nothing for a draft objective with no tasks yet", () => {
+    const draft = newId();
+    db.insert(objectives)
+      .values({
+        id: draft, title: "t", brief: "", repoPath: "/tmp/repo", baseRef: "HEAD",
+        status: "draft", budget: BUDGET, createdAt: Date.now(), updatedAt: Date.now(),
+      })
+      .run();
+    reconcileObjective(db, draft);
+    expect(db.select().from(objectives).where(eq(objectives.id, draft)).get()?.status).toBe("draft");
+  });
+
+  it("lands on done only once every task is done", () => {
+    const a = addTask("T-001");
+    const b = addTask("T-002");
+    setTaskStatus(db, a, "done");
+    reconcileObjective(db, objectiveId);
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "active",
+    );
+
+    setTaskStatus(db, b, "done");
+    reconcileObjective(db, objectiveId);
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "done",
+    );
+  });
+
+  it("fails the objective when a task failed and the policy isn't skip", () => {
+    const a = addTask("T-001");
+    setTaskStatus(db, a, "failed");
+    reconcileObjective(db, objectiveId);
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "failed",
+    );
+  });
+
+  it("still reports done when the policy is skip and the rest finished", () => {
+    db.update(objectives).set({ onFailure: "skip" }).where(eq(objectives.id, objectiveId)).run();
+    const a = addTask("T-001");
+    const b = addTask("T-002");
+    setTaskStatus(db, a, "failed");
+    setTaskStatus(db, b, "done");
+    reconcileObjective(db, objectiveId);
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "done",
+    );
+  });
+
+  it("prefers blocked over any other in-progress signal", () => {
+    const a = addTask("T-001");
+    const b = addTask("T-002");
+    setTaskStatus(db, a, "running");
+    setTaskStatus(db, b, "blocked");
+    reconcileObjective(db, objectiveId);
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "blocked",
+    );
+  });
+});
+
+describe("cancelObjective", () => {
+  it("abandons every unfinished task and cancels the objective", () => {
+    const a = addTask("T-001");
+    const b = addTask("T-002");
+    setTaskStatus(db, a, "done");
+    setTaskStatus(db, b, "blocked");
+
+    expect(cancelObjective(db, objectiveId)).toBe(true);
+
+    const rows = db.select().from(tasks).all();
+    expect(rows.find((t) => t.id === a)?.status).toBe("done"); // already finished — left alone
+    expect(rows.find((t) => t.id === b)?.status).toBe("abandoned");
+    expect(db.select().from(objectives).where(eq(objectives.id, objectiveId)).get()?.status).toBe(
+      "cancelled",
+    );
+  });
+
+  it("is a no-op on an objective that already finished", () => {
+    setObjectiveStatus(db, objectiveId, "done");
+    expect(cancelObjective(db, objectiveId)).toBe(false);
+  });
+
+  it("returns false for an unknown objective", () => {
+    expect(cancelObjective(db, "no-such-id")).toBe(false);
   });
 });

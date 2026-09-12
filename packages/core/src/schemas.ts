@@ -67,6 +67,20 @@ export const ObjectiveStatus = z.enum([
 ]);
 export type ObjectiveStatus = z.infer<typeof ObjectiveStatus>;
 
+/**
+ * What the supervisor does when a task exhausts its attempt budget and
+ * cannot be recovered mechanically. "escalate" (the default) raises an L3
+ * decision instead of silently giving up — the one behavior that actually
+ * makes "own the objective until told otherwise" true. "abandon" and "skip"
+ * exist for objectives where a person has already decided, up front, what a
+ * failure there should mean, so the daemon doesn't have to ask every time.
+ */
+export const ObjectiveOnFailure = z.enum(["escalate", "abandon", "skip"]);
+export type ObjectiveOnFailure = z.infer<typeof ObjectiveOnFailure>;
+
+export const EffortLevel = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type EffortLevel = z.infer<typeof EffortLevel>;
+
 export const ObjectiveSchema = z.object({
   id: z.string(),
   title: z.string().min(1),
@@ -75,6 +89,16 @@ export const ObjectiveSchema = z.object({
   baseRef: z.string().default("HEAD"),
   status: ObjectiveStatus.default("draft"),
   budget: BudgetSchema,
+  onFailure: ObjectiveOnFailure.default("escalate"),
+  /**
+   * Defaults handed to every task this objective's tasks are created with —
+   * needed even before a single task exists, because a freshly submitted
+   * objective can sit in "draft" (awaiting decomposition) across a daemon
+   * restart, and the daemon reconstructs everything from these rows alone.
+   */
+  model: z.string().default("claude-sonnet-5"),
+  effort: EffortLevel.default("medium"),
+  maxAttempts: z.number().int().positive().default(3),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -97,9 +121,6 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
  * Task class drives budget defaults and the tool surface a worker is granted.
  * An investigate task, for instance, gets read-only tools.
  */
-export const EffortLevel = z.enum(["low", "medium", "high", "xhigh", "max"]);
-export type EffortLevel = z.infer<typeof EffortLevel>;
-
 export const TaskClass = z.enum([
   "investigate",
   "implement",

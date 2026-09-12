@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import type { AcceptanceCheck } from "@exec/core";
-import { answerDecision, openDb, runMigrations } from "@exec/db";
+import { answerDecision, cancelObjective, openDb, runMigrations } from "@exec/db";
 import { approveObjective } from "./approve.js";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
 import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.js";
@@ -18,15 +17,17 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
   exec-agent events <objective-id>
   exec-agent decide <decision-key> <option-id> [--by "<name>"]
   exec-agent approve <objective-id>
+  exec-agent abandon <objective-id>
   exec-agent daemon start|stop|status
 
 "do" is the quick path: say what you want, name the repo somewhere in the
 sentence (it's matched against git repos under ~/Desktop — set
-EXEC_REPO_SEARCH_PATHS to add more places to look), and it infers a check where
-it reasonably can ("add/create <file>" gets a real file-exists check; anything
-else falls back to a weak "something changed" check and says so). Flags can go
-anywhere — before the sentence, after it, or both. Override any of it with the
-same flags "run" takes.
+EXEC_REPO_SEARCH_PATHS to add more places to look). If it's obviously a single
+step ("add/create <file>" gets a real file-exists check), that's all that
+happens. Otherwise the supervisor daemon breaks it into a dependency-ordered
+task graph before starting, instead of guessing at a check for a sentence too
+open-ended to infer one from. Flags can go anywhere — before the sentence,
+after it, or both. Override any of it with the same flags "run" takes.
 
   exec-agent do "add test.md in my-project"
   exec-agent do --repo ../some/repo "add a CONTRIBUTING.md"
@@ -53,6 +54,12 @@ Options for "run" (and overrides for "do"):
   --max-attempts <n>         Checkpoint-and-respawn budget (default: 3)
   --max-turns <n>            Turn budget per attempt (default: 30)
   --max-wall-clock-min <n>   Wall-clock budget per attempt, minutes (default: 20)
+  --on-failure <policy>      escalate | abandon | skip — what to do when a task exhausts
+                              its attempts and can't be recovered (default: escalate).
+                              "escalate" raises a decision instead of giving up silently;
+                              "abandon" fails the whole objective; "skip" tolerates that
+                              one task's failure (and drops whatever depended on it) and
+                              lets the rest of the objective still finish.
 
 "daemon start" launches the supervisor as a detached background process (it
 survives this terminal closing); "do"/"run" also do this automatically, so
@@ -68,6 +75,12 @@ also answer decisions. Omitting --by records "cli-operator".
 worker's work always lands on its own branch, never merged automatically.
 This shows you the diff, and on "y" merges that branch into your repo's real
 base branch and pushes it. The dashboard has the same thing as a button.
+
+"abandon" is the explicit "call it off" — an objective otherwise stays the
+daemon's responsibility until it's done, failed, or a decision resolves it.
+Any task not already finished is marked abandoned rather than deleted, so
+what was tried survives in the event log. A task genuinely running right now
+finishes its current attempt regardless; nothing new is started after.
 
 Example:
   exec-agent run \\
@@ -119,40 +132,44 @@ async function runDo(argv: string[]): Promise<void> {
   }
 
   const explicitChecks = flags.get("check") ?? [];
-  let checks: AcceptanceCheck[];
-  if (explicitChecks.length > 0) {
-    checks = explicitChecks.map(parseCheck);
-  } else {
-    const inferred = inferCheck(sentence, repoPath);
-    checks = [inferred.check];
-    if (!inferred.specific) {
-      console.log(
-        `No specific check could be inferred — falling back to "${inferred.check.command}" ` +
-          `(only proves something changed, not that it's correct). Pass --check for a real gate.`,
-      );
-    } else {
-      console.log(`Inferred check: ${inferred.check.label} -> ${inferred.check.command}`);
-    }
-    if (inferred.collisionWarning) {
-      console.log(`Note: ${inferred.collisionWarning}`);
-    }
-  }
-
   const title = flags.get("title")?.[0] ?? sentence.slice(0, 72);
   const opts = readRunOptions(flags);
-
-  await submitAndWatch({
+  const common = {
     repoPath,
     baseRef: opts.baseRef,
     title,
     intent: sentence,
-    checks,
     model: opts.model,
     effort: opts.effort,
     maxAttempts: opts.maxAttempts,
     maxTurns: opts.maxTurns,
     maxWallClockMs: opts.maxWallClockMs,
-  });
+    onFailure: opts.onFailure,
+  };
+
+  // A check you stated yourself always wins — you've already told us how to
+  // verify it, so there's nothing left to plan.
+  if (explicitChecks.length > 0) {
+    await submitAndWatch({ mode: "direct", ...common, checks: explicitChecks.map(parseCheck) });
+    return;
+  }
+
+  const inferred = inferCheck(sentence, repoPath);
+  if (inferred.collisionWarning) {
+    console.log(`Note: ${inferred.collisionWarning}`);
+  }
+
+  if (inferred.specific) {
+    console.log(`Inferred check: ${inferred.check.label} -> ${inferred.check.command}`);
+    await submitAndWatch({ mode: "direct", ...common, checks: [inferred.check] });
+    return;
+  }
+
+  console.log(
+    "Nothing simple enough to check directly — the supervisor daemon will break this " +
+      "down into a task graph before starting.",
+  );
+  await submitAndWatch({ mode: "plan", ...common });
 }
 
 async function runRun(argv: string[]): Promise<void> {
@@ -172,6 +189,7 @@ async function runRun(argv: string[]): Promise<void> {
   const opts = readRunOptions(flags);
 
   await submitAndWatch({
+    mode: "direct",
     repoPath,
     baseRef: opts.baseRef,
     title,
@@ -182,6 +200,7 @@ async function runRun(argv: string[]): Promise<void> {
     maxAttempts: opts.maxAttempts,
     maxTurns: opts.maxTurns,
     maxWallClockMs: opts.maxWallClockMs,
+    onFailure: opts.onFailure,
   });
 }
 
@@ -221,6 +240,25 @@ async function runDecide(argv: string[]): Promise<void> {
     return;
   }
   console.log(`${key} answered "${answer}" by ${answeredBy}.`);
+}
+
+async function runAbandon(argv: string[]): Promise<void> {
+  const objectiveId = argv[0];
+  if (!objectiveId) {
+    console.error("usage: exec-agent abandon <objective-id>");
+    process.exitCode = 1;
+    return;
+  }
+
+  const { db } = openDb();
+  runMigrations(db);
+  const cancelled = cancelObjective(db, objectiveId);
+  if (!cancelled) {
+    console.error(`${objectiveId} is not an open objective (already finished, or no such id).`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`${objectiveId} abandoned. Anything not already finished is marked abandoned.`);
 }
 
 async function runDaemon(argv: string[]): Promise<void> {
@@ -299,6 +337,11 @@ async function main(): Promise<void> {
       return;
     }
     await approveObjective(objectiveId);
+    return;
+  }
+
+  if (command === "abandon") {
+    await runAbandon(rest);
     return;
   }
 

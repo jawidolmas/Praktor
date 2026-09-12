@@ -1,14 +1,17 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { newId, newSessionId, type EffortLevel, type TokenUsage } from "@exec/core";
 import {
   activePolicies,
   addRuledOut,
   answerDecision,
   appendEvent,
+  cascadeAbandon,
   decisions,
   nextDecisionKey,
+  objectives,
+  reconcileObjective,
   runs,
   setObjectiveStatus,
   setTaskStatus,
@@ -455,11 +458,15 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
     removeWorktree(worktree);
 
     if (attempt === task.maxAttempts) {
-      setTaskStatus(db, task.id, "failed");
+      handlePermanentFailure(db, task, objective);
     }
   }
 
-  setObjectiveStatus(db, objective.id, finalStatus);
+  // The objective's status is no longer just mirrored from this one task —
+  // see reconcileObjective for why: with a real task graph, an objective is
+  // "done" only once every task in it is, not whenever any one of them
+  // finishes driving.
+  reconcileObjective(db, objective.id);
 
   const report = renderReport({
     taskTitle: task.title,
@@ -473,4 +480,140 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
   writeArtifact(db, { kind: "report", content: report, objectiveId: objective.id, taskId: task.id });
 
   return finalStatus;
+}
+
+/**
+ * What happens when a task exhausts its attempt budget and the mechanical
+ * checkpoint-and-respawn loop has nothing left to try — governed by the
+ * objective's `onFailure` policy, set at submission time (default
+ * "escalate"). This is the one place Ingredient 1 deliberately reuses
+ * Ingredient 4's decision/Telegram pipeline rather than building a new one:
+ * a permanent failure is exactly the kind of fork a person, not more retries,
+ * should resolve.
+ */
+export function handlePermanentFailure(db: Db, task: TaskRow, objective: ObjectiveRow): void {
+  if (objective.onFailure === "escalate") {
+    raiseFailureDecision(db, task, objective);
+    return;
+  }
+
+  setTaskStatus(db, task.id, "failed", `exhausted ${task.maxAttempts} attempt(s)`);
+  cascadeAbandon(db, task.id);
+  if (objective.onFailure === "abandon") {
+    setObjectiveStatus(db, objective.id, "failed", `${task.key} failed permanently`);
+  }
+  // "skip": the objective's status is left for reconcileObjective to derive
+  // — it lands on "done" once every remaining task is done or abandoned.
+}
+
+/**
+ * Raise an L3 decision — distinct from the L2 decisions a worker raises
+ * mid-run via `request_decision`: this one is the supervisor itself asking
+ * what a permanent failure should mean for the objective, not a worker
+ * asking a domain question. The task is left "blocked" (not "failed") while
+ * this is open, matching how a worker's own request_decision already blocks
+ * a task on a live question — the failure only becomes final once a person
+ * (or a default) says what to do about it.
+ */
+function raiseFailureDecision(db: Db, task: TaskRow, objective: ObjectiveRow): void {
+  const key = nextDecisionKey(db);
+  db.insert(decisions)
+    .values({
+      id: newId(),
+      key,
+      objectiveId: objective.id,
+      taskId: task.id,
+      level: "L3",
+      title: `${task.key} failed after ${task.maxAttempts} attempt(s): ${task.title}`,
+      context:
+        `The worker could not get "${task.title}" to pass its acceptance checks after ` +
+        `${task.maxAttempts} attempt(s). Every attempt's checkpoint is in the event log ` +
+        `(exec-agent events ${objective.id}). Nothing else in this objective runs while this is open.`,
+      options: [
+        {
+          id: "A",
+          label: "Abandon the objective",
+          pros: ["Stops now — no further spend on this objective"],
+          cons: ["Everything else in it is dropped too"],
+        },
+        {
+          id: "B",
+          label: "Grant 3 more attempts",
+          pros: ["Cheap if the last attempt was close"],
+          cons: ["Repeats the same task; may fail again the same way"],
+        },
+        {
+          id: "C",
+          label: "Accept the failure and continue without this task",
+          pros: ["The rest of the objective can still finish"],
+          cons: ["Anything that depends on this task is dropped too"],
+        },
+      ],
+      recommendation: "B",
+      risk: "medium",
+      blockedTaskIds: [task.id],
+      status: "open",
+      createdAt: Date.now(),
+    })
+    .run();
+
+  appendEvent(db, {
+    objectiveId: objective.id,
+    taskId: task.id,
+    payload: {
+      type: "decision.raised",
+      key,
+      level: "L3",
+      title: `${task.key} failed permanently`,
+      blockedTaskIds: [task.id],
+    },
+  });
+
+  setTaskStatus(db, task.id, "blocked", `awaiting ${key}`);
+  setObjectiveStatus(db, objective.id, "blocked", `awaiting ${key}`);
+}
+
+/**
+ * Apply the effect of an answered L3 decision. Deliberately not folded into
+ * the generic `answerDecision` in the db package: that function is shared
+ * with an L2 decision's very different meaning (a worker's live, in-context
+ * question), and only the daemon knows what "abandon" or "grant 3 more
+ * attempts" should actually do to the task graph. Idempotent by construction
+ * — once applied, the task is no longer "blocked", so a decision already
+ * handled is simply skipped on the next tick, whether that tick runs in this
+ * process or a daemon restarted since.
+ */
+export function applyAnsweredFailureDecisions(db: Db): void {
+  const answered = db
+    .select()
+    .from(decisions)
+    .where(and(eq(decisions.level, "L3"), eq(decisions.status, "answered")))
+    .all();
+
+  for (const decision of answered) {
+    if (!decision.taskId) continue;
+    const task = db.select().from(tasks).where(eq(tasks.id, decision.taskId)).get();
+    if (!task || task.status !== "blocked") continue;
+
+    const objective = db.select().from(objectives).where(eq(objectives.id, decision.objectiveId)).get();
+    if (!objective) continue;
+
+    if (decision.answer === "A") {
+      setTaskStatus(db, task.id, "failed", `abandoned via ${decision.key}`);
+      cascadeAbandon(db, task.id);
+      setObjectiveStatus(db, objective.id, "failed", `abandoned via ${decision.key}`);
+    } else if (decision.answer === "B") {
+      db.update(tasks)
+        .set({ maxAttempts: task.maxAttempts + 3, updatedAt: Date.now() })
+        .where(eq(tasks.id, task.id))
+        .run();
+      setTaskStatus(db, task.id, "pending", `${decision.key}: granted 3 more attempts`);
+      reconcileObjective(db, objective.id);
+    } else {
+      // "C", or any other answer: accept the failure and move on.
+      setTaskStatus(db, task.id, "failed", `accepted via ${decision.key}`);
+      cascadeAbandon(db, task.id);
+      reconcileObjective(db, objective.id);
+    }
+  }
 }

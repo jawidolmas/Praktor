@@ -3,10 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   claimPidFile,
+  draftObjectives,
   logFilePath,
   objectives,
   openDb,
   readyTasks,
+  reconcileObjectives,
   releasePidFile,
   runMigrations,
   schedulableObjectives,
@@ -17,7 +19,8 @@ import {
 } from "@exec/db";
 import { reconcileSeedPolicies } from "@exec/policy";
 import { attemptBranchName, removeWorktree } from "@exec/worker";
-import { driveTask, worktreePathFor } from "./engine.js";
+import { applyAnsweredFailureDecisions, driveTask, worktreePathFor } from "./engine.js";
+import { planObjective } from "./plan.js";
 import { loadTelegramConfig, runTelegramBridge } from "./telegram-bridge.js";
 
 /**
@@ -122,6 +125,31 @@ function pickNextTask(db: Db): { task: (typeof tasks.$inferSelect); objective: (
 
 async function mainLoop(db: Db): Promise<never> {
   for (;;) {
+    // Cheap, synchronous housekeeping first: apply any L3 (permanent-failure)
+    // decisions someone answered since the last tick, then re-derive every
+    // in-progress objective's status from its tasks — catches a status
+    // change made outside this loop entirely (a decision answered from the
+    // CLI or dashboard while the daemon sat idle).
+    try {
+      applyAnsweredFailureDecisions(db);
+      reconcileObjectives(db);
+    } catch (err) {
+      console.error("reconciliation pass failed (will retry next tick):", err);
+    }
+
+    const draft = draftObjectives(db)[0];
+    if (draft) {
+      try {
+        await planObjective(db, draft);
+      } catch (err) {
+        // Should not happen — planObjective already falls back internally —
+        // but a draft objective stuck erroring every tick must not wedge the
+        // whole daemon any more than a task crash does below.
+        console.error(`[${draft.id.slice(0, 8)}] planning crashed unexpectedly:`, err);
+      }
+      continue;
+    }
+
     const next = pickNextTask(db);
     if (!next) {
       await sleep(IDLE_POLL_MS);

@@ -6,6 +6,7 @@ import {
   type AcceptanceSpec,
   type Budget,
   type EffortLevel,
+  type ObjectiveOnFailure,
 } from "@exec/core";
 import {
   answerDecision,
@@ -35,6 +36,17 @@ export interface RunObjectiveArgs {
   maxAttempts: number;
   maxTurns: number;
   maxWallClockMs: number;
+  onFailure: ObjectiveOnFailure;
+}
+
+/** The same shape, minus the one field only the direct (non-planned) path
+ *  has: a draft objective is submitted with no checks and no task at all —
+ *  the daemon's planner decides how many tasks it needs and what proves
+ *  each one done. */
+export type DraftObjectiveArgs = Omit<RunObjectiveArgs, "checks">;
+
+function objectiveBudget(args: { maxTurns: number; maxWallClockMs: number }): Budget {
+  return { maxTurns: args.maxTurns, maxTokens: 400_000, maxWallClockMs: args.maxWallClockMs };
 }
 
 /**
@@ -50,11 +62,7 @@ export function submitObjective(
 ): { objectiveId: string; taskId: string } {
   const objectiveId = newId();
   const now = Date.now();
-  const budget: Budget = {
-    maxTurns: args.maxTurns,
-    maxTokens: 400_000,
-    maxWallClockMs: args.maxWallClockMs,
-  };
+  const budget = objectiveBudget(args);
 
   db.insert(objectives)
     .values({
@@ -65,6 +73,10 @@ export function submitObjective(
       baseRef: args.baseRef,
       status: "active",
       budget,
+      onFailure: args.onFailure,
+      model: args.model,
+      effort: args.effort,
+      maxAttempts: args.maxAttempts,
       createdAt: now,
       updatedAt: now,
     })
@@ -106,6 +118,46 @@ export function submitObjective(
   });
 
   return { objectiveId, taskId };
+}
+
+/**
+ * Insert an objective with no tasks yet, status "draft" — the daemon's
+ * planner (apps/daemon/src/plan.ts) is what turns it into a real task graph,
+ * asynchronously, the next time its main loop ticks. Submitting is still
+ * instant and synchronous from the CLI's point of view; only the planning
+ * itself happens later, in the daemon, so closing this terminal right after
+ * submitting cannot lose it.
+ */
+export function submitDraftObjective(
+  db: Db,
+  args: DraftObjectiveArgs,
+): { objectiveId: string } {
+  const objectiveId = newId();
+  const now = Date.now();
+
+  db.insert(objectives)
+    .values({
+      id: objectiveId,
+      title: args.title,
+      brief: args.intent,
+      repoPath: args.repoPath,
+      baseRef: args.baseRef,
+      status: "draft",
+      budget: objectiveBudget(args),
+      onFailure: args.onFailure,
+      model: args.model,
+      effort: args.effort,
+      maxAttempts: args.maxAttempts,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+  appendEvent(db, {
+    objectiveId,
+    payload: { type: "objective.created", title: args.title, repoPath: args.repoPath },
+  });
+
+  return { objectiveId };
 }
 
 const TERMINAL_STATUSES = new Set(["done", "failed", "cancelled"]);
@@ -206,15 +258,25 @@ export async function tailObjective(db: Db, objectiveId: string): Promise<void> 
   }
 }
 
+export type SubmitAndWatchArgs =
+  | ({ mode: "direct" } & RunObjectiveArgs)
+  | ({ mode: "plan" } & DraftObjectiveArgs);
+
 /** The full "do"/"run" flow: submit, make sure a daemon is there to pick it
- *  up, then watch it happen. */
-export async function submitAndWatch(args: RunObjectiveArgs): Promise<void> {
+ *  up, then watch it happen. "direct" is today's one-task path; "plan" is a
+ *  sentence too open-ended for `inferCheck` to pin a check to, handed to the
+ *  daemon's planner instead of guessing. */
+export async function submitAndWatch(args: SubmitAndWatchArgs): Promise<void> {
   const { db } = openDb();
   runMigrations(db);
   reconcileSeedPolicies(db);
 
-  const { objectiveId } = submitObjective(db, args);
+  const { objectiveId } =
+    args.mode === "direct" ? submitObjective(db, args) : submitDraftObjective(db, args);
   console.log(`Objective submitted: ${objectiveId}`);
+  if (args.mode === "plan") {
+    console.log("Breaking this down into a task graph before starting — this can take a moment.");
+  }
 
   const daemon = await ensureDaemonRunning();
   console.log(
