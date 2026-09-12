@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { newId } from "@exec/core";
 import {
@@ -121,7 +121,15 @@ describe("handlePermanentFailure", () => {
 describe("applyAnsweredFailureDecisions", () => {
   function raiseAndAnswer(objective: ObjectiveRow, task: TaskRow, answer: string): void {
     handlePermanentFailure(db, task, objective); // objective is "escalate" in these tests
-    const raised = db.select().from(decisions).where(eq(decisions.taskId, task.id)).get()!;
+    // Filtered to "open", not just taskId: a task can accumulate more than
+    // one L3 decision over multiple failure cycles, and this must always
+    // target the one just raised, not whichever row an unordered query
+    // happens to return first.
+    const raised = db
+      .select()
+      .from(decisions)
+      .where(and(eq(decisions.taskId, task.id), eq(decisions.status, "open")))
+      .get()!;
     db.update(decisions)
       .set({ status: "answered", answer, answeredBy: "ceo", answeredAt: Date.now() })
       .where(eq(decisions.id, raised.id))
@@ -189,6 +197,38 @@ describe("applyAnsweredFailureDecisions", () => {
     applyAnsweredFailureDecisions(db); // task is no longer "blocked" — must be a no-op
     const afterSecond = db.select().from(tasks).where(eq(tasks.id, task.id)).get()!;
     expect(afterSecond.maxAttempts).toBe(afterFirst.maxAttempts);
+  });
+
+  it("regression: a stale, already-applied decision must never be replayed once the task fails again", () => {
+    // Confirmed live: a task that kept failing the same way (e.g. a broken
+    // acceptance check) got "B" answered once, then failed again and raised
+    // a *second* decision, answered "A" (abandon) this time. The first
+    // decision's "B" kept winning forever regardless — gating on task status
+    // alone couldn't tell "already handled" apart from "blocked again for an
+    // unrelated, later reason." This test is that exact two-cycle scenario.
+    const objective = addObjective("escalate");
+    const task = addTask(objective.id, "T-001");
+
+    raiseAndAnswer(objective, task, "B"); // cycle 1: grant more attempts
+    applyAnsweredFailureDecisions(db);
+    expect(db.select().from(tasks).where(eq(tasks.id, task.id)).get()?.status).toBe("pending");
+
+    // The task fails again (a fresh permanent failure, same task, same
+    // objective) — this raises a *second*, independent L3 decision.
+    const reopened = db.select().from(tasks).where(eq(tasks.id, task.id)).get()!;
+    raiseAndAnswer(objective, reopened, "A"); // cycle 2: abandon, this time
+    applyAnsweredFailureDecisions(db);
+
+    const final = db.select().from(tasks).where(eq(tasks.id, task.id)).get()!;
+    expect(final.status).toBe("failed");
+    expect(final.maxAttempts).toBe(reopened.maxAttempts); // not bumped again by the stale "B"
+    expect(db.select().from(objectives).where(eq(objectives.id, objective.id)).get()?.status).toBe(
+      "failed",
+    );
+
+    const allDecisions = db.select().from(decisions).where(eq(decisions.taskId, task.id)).all();
+    expect(allDecisions).toHaveLength(2);
+    expect(allDecisions.every((d) => d.appliedAt !== null)).toBe(true);
   });
 
   it("ignores decisions still open", () => {

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { newId, newSessionId, type EffortLevel, type TokenUsage } from "@exec/core";
 import {
   activePolicies,
@@ -578,25 +578,35 @@ function raiseFailureDecision(db: Db, task: TaskRow, objective: ObjectiveRow): v
  * the generic `answerDecision` in the db package: that function is shared
  * with an L2 decision's very different meaning (a worker's live, in-context
  * question), and only the daemon knows what "abandon" or "grant 3 more
- * attempts" should actually do to the task graph. Idempotent by construction
- * — once applied, the task is no longer "blocked", so a decision already
- * handled is simply skipped on the next tick, whether that tick runs in this
- * process or a daemon restarted since.
+ * attempts" should actually do to the task graph.
+ *
+ * Gated on `appliedAt` being unset, not on the task's current status — a
+ * task can fail, escalate, get reopened, and fail again many times, so
+ * "blocked" alone can't tell a decision that already had its effect applied
+ * apart from a stale one: both look identical once a *later* failure has put
+ * the task back in "blocked" for an unrelated, newer reason. Confirmed live:
+ * gating on task status let a task's first-ever "grant 3 more attempts"
+ * answer keep getting replayed forever, silently overriding every later
+ * decision on the same task — "abandon" and "accept the failure" were
+ * recorded correctly but never took effect. `appliedAt` makes each decision
+ * apply exactly once, ever, regardless of what the task does afterward.
  */
 export function applyAnsweredFailureDecisions(db: Db): void {
   const answered = db
     .select()
     .from(decisions)
-    .where(and(eq(decisions.level, "L3"), eq(decisions.status, "answered")))
+    .where(and(eq(decisions.level, "L3"), eq(decisions.status, "answered"), isNull(decisions.appliedAt)))
     .all();
 
   for (const decision of answered) {
     if (!decision.taskId) continue;
     const task = db.select().from(tasks).where(eq(tasks.id, decision.taskId)).get();
-    if (!task || task.status !== "blocked") continue;
+    if (!task) continue;
 
     const objective = db.select().from(objectives).where(eq(objectives.id, decision.objectiveId)).get();
     if (!objective) continue;
+
+    db.update(decisions).set({ appliedAt: Date.now() }).where(eq(decisions.id, decision.id)).run();
 
     if (decision.answer === "A") {
       setTaskStatus(db, task.id, "failed", `abandoned via ${decision.key}`);

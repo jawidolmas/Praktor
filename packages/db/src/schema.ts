@@ -181,6 +181,20 @@ export const decisions = sqliteTable(
     // back through the same channel (a tapped inline button) can edit that
     // message to show it was answered, instead of leaving a stale button.
     notifiedMessageId: integer("notified_message_id"),
+    // Set once an L3 (permanent-failure) decision's answer has actually been
+    // applied to the task graph (engine.ts's applyAnsweredFailureDecisions).
+    // Necessary, not just tidy: a task can fail, escalate, get reopened, and
+    // fail again many times, so its "blocked" status alone can't tell a
+    // decision that already had its effect applied apart from a stale one —
+    // both look identical (status "answered") once a *later* failure has put
+    // the task back in "blocked" for an unrelated, newer reason. Without this,
+    // an old already-applied decision gets replayed against the task's
+    // current block and wins, silently overriding whatever the actual latest
+    // decision said — confirmed live: a task kept being granted more
+    // attempts forever because its first-ever "grant more" answer kept
+    // getting reapplied, even after later decisions on the same task were
+    // answered "abandon" or "accept the failure."
+    appliedAt: integer("applied_at"),
     createdAt: integer("created_at").notNull().default(now),
   },
   (t) => [
