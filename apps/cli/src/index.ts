@@ -273,12 +273,19 @@ async function runDaemon(argv: string[]): Promise<void> {
     return;
   }
   if (sub === "stop") {
-    const result = stopDaemon();
-    console.log(
-      result.stopped
-        ? `Sent stop signal to the supervisor daemon (pid ${result.pid}).`
-        : "No daemon is running.",
-    );
+    const result = await stopDaemon();
+    if (!result.stopped) {
+      console.log("No daemon is running.");
+    } else if (result.confirmed) {
+      console.log(`Stopped the supervisor daemon (pid ${result.pid}).`);
+    } else {
+      console.error(
+        `Sent a stop signal to the supervisor daemon (pid ${result.pid}), but it had not exited ` +
+          `after 5s. Check "exec-agent daemon status" before starting a new one — starting one ` +
+          `while the old one is still alive risks two daemons driving the same tasks at once.`,
+      );
+      process.exitCode = 1;
+    }
     return;
   }
   if (sub === "status") {

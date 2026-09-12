@@ -3,7 +3,7 @@ import { openSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRunningDaemon, logFilePath } from "@exec/db";
+import { findRunningDaemon, isAlive, logFilePath } from "@exec/db";
 
 /**
  * Launching and checking on the daemon from the CLI's side. The daemon is a
@@ -106,9 +106,45 @@ export function daemonStatus(): { running: boolean; pid?: number } {
   return pid === undefined ? { running: false } : { running: true, pid };
 }
 
-export function stopDaemon(): { stopped: boolean; pid?: number } {
+const STOP_CONFIRM_TIMEOUT_MS = 5_000;
+const STOP_POLL_INTERVAL_MS = 100;
+
+/**
+ * Sends the stop signal and waits to actually see the process gone, rather
+ * than reporting success the instant the signal is sent. Confirmed live:
+ * without this, a caller (a script, or a human moving fast — `daemon stop`
+ * immediately followed by a new `do`/`watch`) has no way to tell "the old
+ * daemon is definitely gone" from "the signal was sent and who knows." On
+ * Windows in particular `process.kill(pid, "SIGTERM")` maps to
+ * `TerminateProcess`, which *requests* termination but is not guaranteed
+ * instantaneous — the pid can briefly still answer `isAlive` afterward.
+ * `confirmed: false` is a real, distinct outcome callers must surface, not
+ * something to swallow into a blanket "stopped".
+ *
+ * `timeoutMs`/`pollIntervalMs` are overridable only so tests can exercise the
+ * "still alive after the deadline" branch quickly — real callers should
+ * always use the defaults.
+ */
+export async function stopDaemon(
+  opts: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<{ stopped: boolean; pid?: number; confirmed?: boolean }> {
   const pid = findRunningDaemon();
   if (pid === undefined) return { stopped: false };
-  process.kill(pid, "SIGTERM");
-  return { stopped: true, pid };
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    // Gone between us reading the pidfile and signaling it (e.g. it crashed
+    // or was stopped by someone else moments ago) — that's success, not an error.
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return { stopped: true, pid, confirmed: true };
+    throw err;
+  }
+
+  const timeoutMs = opts.timeoutMs ?? STOP_CONFIRM_TIMEOUT_MS;
+  const pollIntervalMs = opts.pollIntervalMs ?? STOP_POLL_INTERVAL_MS;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return { stopped: true, pid, confirmed: true };
+    await sleep(pollIntervalMs);
+  }
+  return { stopped: true, pid, confirmed: false };
 }
