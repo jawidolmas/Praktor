@@ -27,7 +27,7 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
   exec-agent approve <objective-id>
   exec-agent abandon <objective-id>
   exec-agent daemon start|stop|status
-  exec-agent daemon install-autostart --mode logon|boot
+  exec-agent daemon install-autostart --mode logon    (or --mode boot)
   exec-agent daemon uninstall-autostart
 
 "do" is the quick path: say what you want, name the repo somewhere in the
@@ -319,8 +319,9 @@ async function runDaemon(argv: string[]): Promise<void> {
     console.log(
       auto.installed
         ? `Autostart: registered (${auto.mode ?? "unrecognized trigger"}).`
-        : "Autostart: not installed — the daemon will not come back after a reboot. Set it up " +
-          "with: exec-agent daemon install-autostart --mode logon|boot",
+        : "Autostart: not installed — the daemon will not come back after a reboot. Set it up with one of:\n" +
+          "  exec-agent daemon install-autostart --mode logon\n" +
+          "  exec-agent daemon install-autostart --mode boot",
     );
     return;
   }
@@ -328,10 +329,16 @@ async function runDaemon(argv: string[]): Promise<void> {
     const { flags } = parseArgs(argv.slice(1));
     const mode = flags.get("mode")?.[0];
     if (mode !== "logon" && mode !== "boot") {
+      // Two full, separately copy-pasteable command lines — not "--mode
+      // logon|boot" as if that "|" were valid syntax. Confirmed live: in
+      // PowerShell that "|" is the pipe operator, so pasting it runs
+      // install-autostart --mode logon and then tries to pipe into a
+      // nonexistent command called "boot".
       console.log("Choose how the daemon should start on its own:\n");
-      console.log(`  logon   ${AUTOSTART_MODE_EXPLANATIONS.logon}`);
-      console.log(`  boot    ${AUTOSTART_MODE_EXPLANATIONS.boot}\n`);
-      console.log("exec-agent daemon install-autostart --mode logon|boot");
+      console.log(`  exec-agent daemon install-autostart --mode logon`);
+      console.log(`    ${AUTOSTART_MODE_EXPLANATIONS.logon}\n`);
+      console.log(`  exec-agent daemon install-autostart --mode boot`);
+      console.log(`    ${AUTOSTART_MODE_EXPLANATIONS.boot}`);
       process.exitCode = 1;
       return;
     }
