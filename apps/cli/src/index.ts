@@ -11,6 +11,7 @@ import {
 import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.js";
 import { printEvents } from "./events.js";
 import { inferCheck } from "./infer.js";
+import { printObjectiveList } from "./list.js";
 import { resolveRepoFromText } from "./resolve-repo.js";
 import { submitAndWatch, tailObjective } from "./run.js";
 
@@ -19,6 +20,7 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
 
   exec-agent do "<what to do, in plain English>" [options]
   exec-agent run --repo <path> --intent "<what to do>" --check "<label>=<command>" [options]
+  exec-agent list [--status <status>]
   exec-agent watch <objective-id>
   exec-agent events <objective-id>
   exec-agent decide <decision-key> <option-id> [--by "<name>"]
@@ -83,6 +85,11 @@ daemon comes back on its own. "--mode logon" starts it next time you log in
 before anyone logs in (needs an elevated/Administrator terminal to register).
 Re-running it with a different --mode switches which one is registered.
 "daemon uninstall-autostart" removes it.
+
+"list" shows every objective the supervisor knows about — newest first, with
+status, task progress, and when it last did anything — so you can find one
+again without already knowing its id. Filter to one status with --status
+(e.g. --status blocked to see what's waiting on you).
 
 "decide" answers an open decision from any terminal, not necessarily the one
 watching the objective — useful once you've walked away. The dashboard can
@@ -353,6 +360,12 @@ async function main(): Promise<void> {
       return;
     }
     printEvents(objectiveId);
+    return;
+  }
+
+  if (command === "list") {
+    const { flags } = parseArgs(rest);
+    printObjectiveList(flags.get("status")?.[0]);
     return;
   }
 

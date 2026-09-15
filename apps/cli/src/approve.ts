@@ -1,14 +1,15 @@
 import { createInterface } from "node:readline/promises";
 import { eq } from "drizzle-orm";
 import {
-  acceptedRun,
+  acceptedRuns,
   appendEvent,
   markObjectiveMerged,
   objectives,
   openDb,
   runMigrations,
+  tasks,
 } from "@exec/db";
-import { attemptBranchName, computeApprovalDiff, mergeAndPush } from "@exec/worker";
+import { attemptBranchName, computeApprovalDiffs, mergeAndPushAll } from "@exec/worker";
 
 const MAX_DIFF_LINES = 400;
 
@@ -47,8 +48,8 @@ export async function approveObjective(objectiveId: string): Promise<void> {
     return;
   }
 
-  const accepted = acceptedRun(db, objectiveId);
-  if (!accepted) {
+  const accepted = acceptedRuns(db, objectiveId);
+  if (accepted.length === 0) {
     console.error(
       objective.status === "done"
         ? "Objective is done, but no accepted run was found — nothing to approve."
@@ -58,36 +59,46 @@ export async function approveObjective(objectiveId: string): Promise<void> {
     return;
   }
 
-  const branch = attemptBranchName(accepted.taskId, accepted.attempt);
-  const diff = computeApprovalDiff({ repoPath: accepted.repoPath, baseRef: accepted.baseRef, branch });
+  const taskById = new Map(
+    db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all().map((t) => [t.id, t] as const),
+  );
+  const branches = accepted.map((a) => attemptBranchName(a.taskId, a.attempt));
+  const diffs = computeApprovalDiffs({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branches);
 
-  if (!diff.trim()) {
-    console.log("No diff to show — the accepted branch has nothing beyond its base. Nothing to approve.");
+  const nonEmpty = diffs.filter((d) => d.diff.trim());
+  if (nonEmpty.length === 0) {
+    console.log("No diff to show — every accepted branch has nothing beyond its base. Nothing to approve.");
     return;
   }
 
   console.log(`\n${"=".repeat(72)}`);
-  console.log(`Reviewing ${branch}  (repo: ${accepted.repoPath})`);
-  console.log("=".repeat(72));
-  printDiff(diff);
-  console.log("=".repeat(72));
+  for (const [i, d] of diffs.entries()) {
+    const task = taskById.get(accepted[i]!.taskId);
+    console.log(`Reviewing ${d.branch}  —  ${task?.title ?? "(task)"}  (repo: ${accepted[0]!.repoPath})`);
+    console.log("-".repeat(72));
+    printDiff(d.diff.trim() ? d.diff : "(no diff beyond base)");
+    console.log("=".repeat(72));
+  }
 
-  const approved = await confirm(`Merge ${branch} into your real repo and push?`);
+  const approved = await confirm(
+    `Merge ${branches.length} branch(es) into your real repo and push?`,
+  );
   if (!approved) {
     console.log("Not merged.");
     return;
   }
 
-  const result = mergeAndPush({ repoPath: accepted.repoPath, baseRef: accepted.baseRef, branch });
+  const result = mergeAndPushAll({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branches);
+  for (const b of result.branches) console.log(`  [${b.merged ? "OK" : "FAIL"}] ${b.branch} — ${b.message}`);
   console.log(result.message);
 
-  if (result.merged) {
+  if (result.allMerged) {
     markObjectiveMerged(db, objectiveId);
     appendEvent(db, {
       objectiveId,
       payload: {
         type: "objective.approved",
-        branch,
+        branch: branches.join(", "),
         baseRef: result.baseBranch,
         pushed: result.pushed,
         approvedBy: "cli-operator",

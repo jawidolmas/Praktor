@@ -19,7 +19,8 @@ import {
 } from "@exec/db";
 import { reconcileSeedPolicies } from "@exec/policy";
 import { attemptBranchName, removeWorktree } from "@exec/worker";
-import { applyAnsweredFailureDecisions, driveTask, worktreePathFor } from "./engine.js";
+import { applyAnsweredFailureDecisions, driveTask, worktreePathFor, worktreesDir } from "./engine.js";
+import { reclaimWorktrees } from "./gc.js";
 import { planObjective } from "./plan.js";
 import { loadTelegramConfig, runTelegramBridge } from "./telegram-bridge.js";
 
@@ -123,6 +124,30 @@ function pickNextTask(db: Db): { task: (typeof tasks.$inferSelect); objective: (
   return undefined;
 }
 
+// A directory scan plus one row lookup per entry is cheap, but there is no
+// reason to pay it on every 5s idle tick — worktrees only pile up as fast as
+// objectives finish, which is nowhere near that often. Checked only when
+// there's no work to schedule anyway, so it never competes with driving a
+// real task.
+const GC_INTERVAL_MS = 15 * 60_000;
+let lastGcAt = 0;
+
+function maybeReclaimWorktrees(db: Db): void {
+  if (Date.now() - lastGcAt < GC_INTERVAL_MS) return;
+  lastGcAt = Date.now();
+  const { removed } = reclaimWorktrees(db, worktreesDir());
+  if (removed > 0) console.log(`Reclaimed ${removed} worktree(s) no longer needed.`);
+}
+
+/** Runs unconditionally, ignoring the interval throttle — for the one call
+ *  at daemon startup, right after `recoverOrphans`, where "no longer needed"
+ *  includes everything the *previous* daemon instance never got around to. */
+function reclaimWorktreesNow(db: Db): void {
+  lastGcAt = Date.now();
+  const { removed } = reclaimWorktrees(db, worktreesDir());
+  if (removed > 0) console.log(`Reclaimed ${removed} worktree(s) left over from before this start.`);
+}
+
 async function mainLoop(db: Db): Promise<never> {
   for (;;) {
     // Cheap, synchronous housekeeping first: apply any L3 (permanent-failure)
@@ -152,6 +177,7 @@ async function mainLoop(db: Db): Promise<never> {
 
     const next = pickNextTask(db);
     if (!next) {
+      maybeReclaimWorktrees(db);
       await sleep(IDLE_POLL_MS);
       continue;
     }
@@ -192,6 +218,7 @@ function main(): void {
   runMigrations(db);
   reconcileSeedPolicies(db);
   recoverOrphans(db);
+  reclaimWorktreesNow(db);
 
   console.log(`Praktor daemon started (pid ${process.pid}).`);
   console.log(`Database: ${path}`);

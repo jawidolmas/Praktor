@@ -1,12 +1,12 @@
 import { desc, eq } from "drizzle-orm";
 import {
-  acceptedRun,
+  acceptedRuns,
   answerDecision,
   appendEvent,
   autostartStatus,
   decisions,
-  events,
   findRunningDaemon,
+  listObjectives,
   markObjectiveMerged,
   objectives,
   policies,
@@ -16,8 +16,11 @@ import {
   type AutostartStatus,
   type Db,
 } from "@exec/db";
-import { attemptBranchName, computeApprovalDiff, mergeAndPush } from "@exec/worker";
+import { attemptBranchName, computeApprovalDiffs, mergeAndPushAll } from "@exec/worker";
 import { describeEvent } from "./format.js";
+
+export { listObjectives };
+export type { ObjectiveSummary } from "@exec/db";
 
 /**
  * Data access for the dashboard. Almost every function here only ever
@@ -51,48 +54,6 @@ export function getDaemonStatus(): DaemonStatusInfo {
   };
 }
 
-export interface ObjectiveSummary {
-  id: string;
-  title: string;
-  status: string;
-  repoPath: string;
-  createdAt: number;
-  updatedAt: number;
-  taskCount: number;
-  doneTaskCount: number;
-  lastEventAt: number | null;
-}
-
-export function listObjectives(db: Db): ObjectiveSummary[] {
-  const objRows = db.select().from(objectives).orderBy(desc(objectives.createdAt)).all();
-  const taskRows = db.select().from(tasks).all();
-  const lastEventRows = db
-    .select({ objectiveId: events.objectiveId, ts: events.ts })
-    .from(events)
-    .all();
-
-  const lastEventByObjective = new Map<string, number>();
-  for (const row of lastEventRows) {
-    if (!row.objectiveId) continue;
-    const prev = lastEventByObjective.get(row.objectiveId) ?? 0;
-    if (row.ts > prev) lastEventByObjective.set(row.objectiveId, row.ts);
-  }
-
-  return objRows.map((o) => {
-    const forObjective = taskRows.filter((t) => t.objectiveId === o.id);
-    return {
-      id: o.id,
-      title: o.title,
-      status: o.status,
-      repoPath: o.repoPath,
-      createdAt: o.createdAt,
-      updatedAt: o.updatedAt,
-      taskCount: forObjective.length,
-      doneTaskCount: forObjective.filter((t) => t.status === "done").length,
-      lastEventAt: lastEventByObjective.get(o.id) ?? null,
-    };
-  });
-}
 
 export interface ObjectiveDetail {
   objective: typeof objectives.$inferSelect;
@@ -186,24 +147,32 @@ export function answerOpenDecision(
   return answerDecision(db, args);
 }
 
+export interface ApprovalBranch {
+  taskId: string;
+  taskTitle: string;
+  branch: string;
+  diff: string;
+}
+
 export interface ApprovalStatus {
-  /** True only when there's a real diff sitting there, unmerged, ready for a
-   *  human "yes" — the one case the dashboard shows a diff and a button for. */
+  /** True only when there's at least one real diff sitting there, unmerged,
+   *  ready for a human "yes" — the one case the dashboard shows diffs and a
+   *  button for. */
   eligible: boolean;
   alreadyMerged: boolean;
   mergedAt?: number;
   reason?: string;
-  branch?: string;
   repoPath?: string;
-  diff?: string;
+  branches?: ApprovalBranch[];
 }
 
-/** What the "Review & Approve" panel needs: the diff to show, or a plain
- *  reason there's nothing to approve yet (not done, no actual change) — or,
- *  distinctly, confirmation that it's already been merged. Computing the
- *  diff means running git against the user's real repo — read-only
- *  (`git diff`), same trust level as everything else here, just pointed at
- *  a different path than a worktree. */
+/** What the "Review & Approve" panel needs: one diff per task that reached
+ *  "done" (an objective can decompose into several — see `acceptedRuns`), or
+ *  a plain reason there's nothing to approve yet, or, distinctly,
+ *  confirmation that it's already been merged. Computing diffs means running
+ *  git against the user's real repo — read-only (`git diff`), same trust
+ *  level as everything else here, just pointed at a different path than a
+ *  worktree. */
 export function getApprovalStatus(db: Db, objectiveId: string): ApprovalStatus {
   const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
   if (!objective) return { eligible: false, alreadyMerged: false, reason: "No such objective." };
@@ -211,8 +180,8 @@ export function getApprovalStatus(db: Db, objectiveId: string): ApprovalStatus {
     return { eligible: false, alreadyMerged: true, mergedAt: objective.mergedAt };
   }
 
-  const accepted = acceptedRun(db, objectiveId);
-  if (!accepted) {
+  const accepted = acceptedRuns(db, objectiveId);
+  if (accepted.length === 0) {
     return {
       eligible: false,
       alreadyMerged: false,
@@ -220,13 +189,23 @@ export function getApprovalStatus(db: Db, objectiveId: string): ApprovalStatus {
     };
   }
 
-  const branch = attemptBranchName(accepted.taskId, accepted.attempt);
-  const diff = computeApprovalDiff({ repoPath: accepted.repoPath, baseRef: accepted.baseRef, branch });
-  if (!diff.trim()) {
-    return { eligible: false, alreadyMerged: false, reason: "The accepted branch has nothing beyond its base — nothing to approve." };
+  const taskById = new Map(
+    db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all().map((t) => [t.id, t] as const),
+  );
+  const branchNames = accepted.map((a) => attemptBranchName(a.taskId, a.attempt));
+  const diffs = computeApprovalDiffs({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branchNames);
+  const branches: ApprovalBranch[] = accepted.map((a, i) => ({
+    taskId: a.taskId,
+    taskTitle: taskById.get(a.taskId)?.title ?? "(task)",
+    branch: diffs[i]!.branch,
+    diff: diffs[i]!.diff,
+  }));
+
+  if (branches.every((b) => !b.diff.trim())) {
+    return { eligible: false, alreadyMerged: false, reason: "Every accepted branch has nothing beyond its base — nothing to approve." };
   }
 
-  return { eligible: true, alreadyMerged: false, branch, repoPath: accepted.repoPath, diff };
+  return { eligible: true, alreadyMerged: false, repoPath: accepted[0]!.repoPath, branches };
 }
 
 export interface ApproveResult {
@@ -234,7 +213,7 @@ export interface ApproveResult {
   message: string;
 }
 
-/** Merge and push the accepted branch into the real repo, gated on the
+/** Merge and push every accepted branch into the real repo, gated on the
  *  dashboard's Merge button having just been clicked — that click is the
  *  human "yes" this operation requires, the same as the CLI's y/N prompt. */
 export function approveObjective(db: Db, objectiveId: string, approvedBy: string): ApproveResult {
@@ -242,19 +221,19 @@ export function approveObjective(db: Db, objectiveId: string, approvedBy: string
   if (!objective) return { ok: false, message: "No such objective." };
   if (objective.mergedAt) return { ok: false, message: "Already merged." };
 
-  const accepted = acceptedRun(db, objectiveId);
-  if (!accepted) return { ok: false, message: "Nothing to approve." };
+  const accepted = acceptedRuns(db, objectiveId);
+  if (accepted.length === 0) return { ok: false, message: "Nothing to approve." };
 
-  const branch = attemptBranchName(accepted.taskId, accepted.attempt);
-  const result = mergeAndPush({ repoPath: accepted.repoPath, baseRef: accepted.baseRef, branch });
+  const branchNames = accepted.map((a) => attemptBranchName(a.taskId, a.attempt));
+  const result = mergeAndPushAll({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branchNames);
 
-  if (result.merged) {
+  if (result.allMerged) {
     markObjectiveMerged(db, objectiveId);
     appendEvent(db, {
       objectiveId,
       payload: {
         type: "objective.approved",
-        branch,
+        branch: branchNames.join(", "),
         baseRef: result.baseBranch,
         pushed: result.pushed,
         approvedBy,
@@ -262,5 +241,5 @@ export function approveObjective(db: Db, objectiveId: string, approvedBy: string
     });
   }
 
-  return { ok: result.merged, message: result.message };
+  return { ok: result.allMerged, message: result.message };
 }

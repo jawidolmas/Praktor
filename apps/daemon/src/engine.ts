@@ -119,14 +119,18 @@ async function waitForDecisionAnswerForever(
   }
 }
 
+/** Exported so crash recovery and worktree GC (index.ts, gc.ts) resolve the
+ *  same root every retry and sweep computes — one convention, not two that
+ *  could drift apart. */
+export function worktreesDir(): string {
+  return resolve(process.env["EXEC_WORKTREES_DIR"] ?? join(homedir(), ".exec-agent", "worktrees"));
+}
+
 /** Exported so crash recovery (index.ts) can find and clean up a stale
  *  worktree left behind by a killed attempt, using the exact same path a
  *  retry will compute — one convention, not two that could drift apart. */
 export function worktreePathFor(taskId: string, attempt: number): string {
-  return resolve(
-    process.env["EXEC_WORKTREES_DIR"] ?? join(homedir(), ".exec-agent", "worktrees"),
-    `${taskId}-${attempt}`,
-  );
+  return resolve(worktreesDir(), `${taskId}-${attempt}`);
 }
 
 interface AttemptOutcome {

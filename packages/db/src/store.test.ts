@@ -5,7 +5,7 @@ import { openDb, type Db } from "./client.js";
 import { runMigrations } from "./migrate.js";
 import { artifacts, decisions, objectives, runs, tasks } from "./schema.js";
 import {
-  acceptedRun,
+  acceptedRuns,
   activeObjectives,
   addRuledOut,
   answerDecision,
@@ -15,6 +15,7 @@ import {
   createTasksFromPlan,
   draftObjectives,
   getSetting,
+  listObjectives,
   markDecisionNotified,
   markObjectiveMerged,
   nextDecisionKey,
@@ -335,25 +336,48 @@ function addRun(taskId: string, attempt: number): void {
     .run();
 }
 
-describe("acceptedRun", () => {
-  it("returns the highest-attempt run for a done objective's task", () => {
+describe("acceptedRuns", () => {
+  it("returns the highest-attempt run for a done objective's single task", () => {
     const taskId = addTask("T-001");
     addRun(taskId, 1);
     addRun(taskId, 2);
+    setTaskStatus(db, taskId, "done");
     setObjectiveStatus(db, objectiveId, "done");
 
-    const result = acceptedRun(db, objectiveId);
-    expect(result).toEqual({ taskId, attempt: 2, repoPath: "/tmp/repo", baseRef: "HEAD" });
+    const result = acceptedRuns(db, objectiveId);
+    expect(result).toEqual([{ taskId, attempt: 2, repoPath: "/tmp/repo", baseRef: "HEAD" }]);
   });
 
-  it("returns undefined when the objective isn't done yet", () => {
+  it("returns one accepted run per done task, in creation order, for a multi-task objective", () => {
+    const t1 = addTask("T-001");
+    const t2 = addTask("T-002");
+    const t3 = addTask("T-003");
+    addRun(t1, 1);
+    addRun(t2, 1);
+    addRun(t2, 2);
+    addRun(t3, 1);
+    setTaskStatus(db, t1, "done");
+    setTaskStatus(db, t2, "done");
+    setTaskStatus(db, t3, "failed");
+    setObjectiveStatus(db, objectiveId, "done");
+
+    const result = acceptedRuns(db, objectiveId);
+    // t3 failed (e.g. "skip" policy let the objective finish anyway) — it has
+    // nothing committed worth merging, so it's excluded, not just last.
+    expect(result).toEqual([
+      { taskId: t1, attempt: 1, repoPath: "/tmp/repo", baseRef: "HEAD" },
+      { taskId: t2, attempt: 2, repoPath: "/tmp/repo", baseRef: "HEAD" },
+    ]);
+  });
+
+  it("returns an empty array when the objective isn't done yet", () => {
     const taskId = addTask("T-001");
     addRun(taskId, 1);
-    expect(acceptedRun(db, objectiveId)).toBeUndefined();
+    expect(acceptedRuns(db, objectiveId)).toEqual([]);
   });
 
-  it("returns undefined for an unknown objective", () => {
-    expect(acceptedRun(db, "no-such-id")).toBeUndefined();
+  it("returns an empty array for an unknown objective", () => {
+    expect(acceptedRuns(db, "no-such-id")).toEqual([]);
   });
 });
 
@@ -379,6 +403,36 @@ describe("draftObjectives", () => {
       .run();
 
     expect(draftObjectives(db).map((o) => o.id)).toEqual([draft]);
+  });
+});
+
+describe("listObjectives", () => {
+  it("summarises task progress and last event time per objective, newest first", () => {
+    const older = newId();
+    db.insert(objectives)
+      .values({
+        id: older, title: "older one", brief: "", repoPath: "/tmp/repo",
+        baseRef: "HEAD", status: "done", budget: BUDGET,
+        createdAt: Date.now() - 1000, updatedAt: Date.now() - 1000,
+      })
+      .run();
+
+    const t1 = addTask("T-001");
+    const t2 = addTask("T-002");
+    setTaskStatus(db, t1, "done");
+    appendEvent(db, { objectiveId, payload: { type: "objective.status_changed", from: "draft", to: "active" } });
+
+    const summaries = listObjectives(db);
+    expect(summaries.map((s) => s.id)).toEqual([objectiveId, older]);
+
+    const current = summaries.find((s) => s.id === objectiveId)!;
+    expect(current.taskCount).toBe(2);
+    expect(current.doneTaskCount).toBe(1);
+    expect(current.lastEventAt).toBeTypeOf("number");
+
+    const olderSummary = summaries.find((s) => s.id === older)!;
+    expect(olderSummary.taskCount).toBe(0);
+    expect(olderSummary.lastEventAt).toBeNull();
   });
 });
 

@@ -110,7 +110,7 @@ async function mergeApproved() {
     // guard below will skip re-rendering the panel — reset the button by hand
     // or it would be stuck saying "Merging…" with no way to retry.
     btn.disabled = false;
-    btn.textContent = "Merge into real repo & push";
+    btn.textContent = "Merge & push";
   }
   await refreshApproval();
   await refreshDetail();
@@ -142,15 +142,25 @@ function renderApproval(status) {
   }
 
   panel.hidden = false;
+  const branches = status.branches || [];
+  const branchesHtml = branches
+    .map(
+      (b) => `
+    <div style="padding: 10px 18px 4px; font-size: 13px;">
+      <span class="mono">${escapeHtml(b.branch)}</span> — ${escapeHtml(b.taskTitle)}
+    </div>
+    <div class="diff">${b.diff.trim() ? renderDiff(b.diff) : '<div class="diff-ctx">(no diff beyond base)</div>'}</div>`,
+    )
+    .join("");
   el.innerHTML = `
     <div style="padding: 0 18px 14px; font-size: 13px;">
-      <span class="mono">${escapeHtml(status.branch)}</span> against
+      ${branches.length} branch(es) against
       <span class="mono">${escapeHtml(status.repoPath)}</span> — review before this touches your real repo.
     </div>
-    <div class="diff">${renderDiff(status.diff)}</div>
+    ${branchesHtml}
     <div class="decision-answer-row" style="padding: 14px 18px;">
       <input type="text" id="approvedBy" class="by-input" placeholder="approved by (optional)" />
-      <button class="option-btn recommended" id="mergeBtn">Merge into real repo &amp; push</button>
+      <button class="option-btn recommended" id="mergeBtn">Merge ${branches.length} branch(es) &amp; push</button>
     </div>
   `;
   document.getElementById("mergeBtn").addEventListener("click", () => mergeApproved().catch((err) => console.error(err)));

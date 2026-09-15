@@ -193,6 +193,53 @@ export function draftObjectives(db: Db): ObjectiveRow[] {
     .all();
 }
 
+export interface ObjectiveSummary {
+  id: string;
+  title: string;
+  status: string;
+  repoPath: string;
+  createdAt: number;
+  updatedAt: number;
+  taskCount: number;
+  doneTaskCount: number;
+  lastEventAt: number | null;
+}
+
+/** Every objective, newest first, with just enough task/event data to answer
+ *  "what's outstanding" without already knowing an id — the entry point for
+ *  the CLI's `list` command and the dashboard's objective index alike, so the
+ *  two never drift into different definitions of the same summary. */
+export function listObjectives(db: Db): ObjectiveSummary[] {
+  const objRows = db.select().from(objectives).orderBy(desc(objectives.createdAt)).all();
+  const taskRows = db.select().from(tasks).all();
+  const lastEventRows = db
+    .select({ objectiveId: events.objectiveId, ts: events.ts })
+    .from(events)
+    .all();
+
+  const lastEventByObjective = new Map<string, number>();
+  for (const row of lastEventRows) {
+    if (!row.objectiveId) continue;
+    const prev = lastEventByObjective.get(row.objectiveId) ?? 0;
+    if (row.ts > prev) lastEventByObjective.set(row.objectiveId, row.ts);
+  }
+
+  return objRows.map((o) => {
+    const forObjective = taskRows.filter((t) => t.objectiveId === o.id);
+    return {
+      id: o.id,
+      title: o.title,
+      status: o.status,
+      repoPath: o.repoPath,
+      createdAt: o.createdAt,
+      updatedAt: o.updatedAt,
+      taskCount: forObjective.length,
+      doneTaskCount: forObjective.filter((t) => t.status === "done").length,
+      lastEventAt: lastEventByObjective.get(o.id) ?? null,
+    };
+  });
+}
+
 /** An objective never leaves one of these once it reaches one. */
 const TERMINAL_OBJECTIVE_STATUSES = new Set(["done", "failed", "cancelled"]);
 
@@ -840,29 +887,40 @@ export interface AcceptedRun {
 }
 
 /**
- * The run whose branch actually holds the accepted work for an objective —
- * only meaningful once its task is "done" (verify passed), since that's the
- * one state where exactly one run is known to have succeeded. Only v0.1's
- * one-task-per-objective shape is assumed here; a real DAG would need to
- * pick a specific task, not "the" task.
+ * The runs whose branches actually hold the accepted work for an objective —
+ * one per task that reached "done" (verify passed), in task-creation order.
+ * An objective with multiple tasks (the normal shape since multi-task
+ * decomposition) can finish "done" with some of its tasks "failed" or
+ * "abandoned" under an "escalate"/"skip" failure policy — those have nothing
+ * committed worth merging, so they're excluded rather than blocking the ones
+ * that did succeed. A task that is "done" always has at least one concluded
+ * run, by construction of `driveTask`.
  */
-export function acceptedRun(db: Db, objectiveId: string): AcceptedRun | undefined {
+export function acceptedRuns(db: Db, objectiveId: string): AcceptedRun[] {
   const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
-  if (!objective || objective.status !== "done") return undefined;
+  if (!objective || objective.status !== "done") return [];
 
-  const task = db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).get();
-  if (!task) return undefined;
-
-  const run = db
+  const doneTasks = db
     .select()
-    .from(runs)
-    .where(eq(runs.taskId, task.id))
-    .orderBy(desc(runs.attempt))
-    .limit(1)
-    .get();
-  if (!run) return undefined;
+    .from(tasks)
+    .where(and(eq(tasks.objectiveId, objectiveId), eq(tasks.status, "done")))
+    .orderBy(tasks.createdAt, tasks.key)
+    .all();
 
-  return { taskId: task.id, attempt: run.attempt, repoPath: objective.repoPath, baseRef: objective.baseRef };
+  const accepted: AcceptedRun[] = [];
+  for (const task of doneTasks) {
+    const run = db
+      .select()
+      .from(runs)
+      .where(eq(runs.taskId, task.id))
+      .orderBy(desc(runs.attempt))
+      .limit(1)
+      .get();
+    if (run) {
+      accepted.push({ taskId: task.id, attempt: run.attempt, repoPath: objective.repoPath, baseRef: objective.baseRef });
+    }
+  }
+  return accepted;
 }
 
 export function markObjectiveMerged(db: Db, objectiveId: string): void {

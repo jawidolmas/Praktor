@@ -111,22 +111,25 @@ Afterwards:
 exec-agent events <objective-id>   # full event log for that run
 ```
 
-Every run prints its objective id and the git branch (`exec/<id>-attempt-N`) the work landed on.
-**Nothing is ever merged automatically** — a worker's accepted work sits on its own branch until
-you review and approve it:
+Every run prints its objective id and the git branch (`exec/<id>-attempt-N`) the work landed on —
+an objective decomposed into several tasks lands on one branch per task, not one branch for the
+whole objective. **Nothing is ever merged automatically** — a worker's accepted work sits on its
+own branch until you review and approve it:
 
 ```bash
-exec-agent approve <objective-id>    # shows the diff; on "y", merges into your repo's real
-                                      # branch and pushes it
+exec-agent approve <objective-id>    # shows the diff for every task that finished — one per
+                                      # branch — and on "y", merges and pushes all of them
 ```
 
-(The dashboard has the same thing as a diff view with a Merge button.)
+(The dashboard has the same thing as a diff view per branch and one Merge button.)
 
 `do` and `run` both submit the objective to the supervisor daemon and then watch it live — same
 output as always. **Ctrl-C stops watching, not the objective**: it keeps running in the daemon
 regardless, and closing the terminal entirely has the same effect. Come back to it any time:
 
 ```bash
+exec-agent list                      # every objective the supervisor knows about, newest first —
+                                      # status, task progress, when it last did anything
 exec-agent watch <objective-id>      # reattach and watch live, from any terminal
 exec-agent daemon status             # is a daemon running, and what's its pid
 exec-agent daemon stop               # ask it to exit; work resumes from its last
@@ -151,6 +154,11 @@ something; `exec-agent daemon start` exists for when you want it running ahead o
   "submit it and check back later" is that checking back later must not itself look like the
   worker stalling.
 - Logs to `$EXEC_HOME/daemon.log`; single-instance-locked via `$EXEC_HOME/daemon.pid`.
+- Reclaims worktrees nothing will ever need again — a merged objective's, or one that failed or
+  was abandoned outright — on every start and periodically while idle, so weeks of unattended runs
+  don't leak disk. A task still waiting on human review (`approve`) or a live decision always
+  keeps its worktree; reclamation only ever removes what's already been captured elsewhere or will
+  never be used.
 
 ## Dashboard
 
