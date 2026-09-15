@@ -248,6 +248,12 @@ export function getApprovalStatus(db: Db, objectiveId: string): ApprovalStatus {
 export interface ApproveResult {
   ok: boolean;
   message: string;
+  /** Per branch, so a partial failure (a real merge conflict between two
+   *  accepted branches, confirmed live — two tasks independently created the
+   *  same file with different content) shows which branch and why, instead
+   *  of a single generic message that reads like the whole thing failed even
+   *  though some branches landed and stayed landed. */
+  branches?: { branch: string; merged: boolean; message: string }[];
 }
 
 /** Merge and push every accepted branch into the real repo, gated on the
@@ -278,5 +284,5 @@ export function approveObjective(db: Db, objectiveId: string, approvedBy: string
     });
   }
 
-  return { ok: result.allMerged, message: result.message };
+  return { ok: result.allMerged, message: result.message, branches: result.branches };
 }

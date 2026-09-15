@@ -97,6 +97,31 @@ function renderDiff(diff) {
     .join("");
 }
 
+// The result of the last merge attempt, shown as an inline banner rather
+// than a native alert() — a native dialog reads as an error even when it
+// isn't one (confirmed live: "merged locally, but push failed" is often a
+// harmless no-remote message, but a modal popup makes it look catastrophic),
+// and it can't show which specific branch did or didn't make it in. Cleared
+// whenever a fresh merge attempt starts, or once the objective actually
+// reaches "already merged".
+let lastMergeResult;
+
+function renderMergeResultBanner(result) {
+  if (!result) return "";
+  const rows = (result.branches || [])
+    .map(
+      (b) => `<div class="merge-result-row ${b.merged ? "ok" : "fail"}">
+        <span class="mono">${escapeHtml(b.branch)}</span> — ${escapeHtml(b.message)}
+      </div>`,
+    )
+    .join("");
+  return `
+    <div class="merge-result-banner ${result.ok ? "ok" : "fail"}">
+      <div class="merge-result-summary">${escapeHtml(result.message)}</div>
+      ${rows}
+    </div>`;
+}
+
 async function mergeApproved() {
   const btn = document.getElementById("mergeBtn");
   const byInput = document.getElementById("approvedBy");
@@ -104,11 +129,12 @@ async function mergeApproved() {
   btn.disabled = true;
   btn.textContent = "Merging…";
   const { ok, data } = await postJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/approve`, { approvedBy });
+  lastMergeResult = { ok, message: data.message || (ok ? "Merged." : "Merge failed."), branches: data.branches };
+  // Force a rebuild even if the fetched /approval status looks unchanged
+  // from before (same branches, still eligible) — otherwise the guard below
+  // would skip re-rendering and this result would never actually show.
+  lastApprovalKey = undefined;
   if (!ok) {
-    alert(data.message || "Merge failed.");
-    // A failed merge (e.g. a dirty repo) leaves eligibility unchanged, so the
-    // guard below will skip re-rendering the panel — reset the button by hand
-    // or it would be stuck saying "Merging…" with no way to retry.
     btn.disabled = false;
     btn.textContent = "Merge & push";
   }
@@ -132,6 +158,7 @@ function renderApproval(status) {
   const el = document.getElementById("approval");
 
   if (status.alreadyMerged) {
+    lastMergeResult = undefined;
     panel.hidden = false;
     el.innerHTML = `<div class="empty">✓ Approved and merged at ${new Date(status.mergedAt).toLocaleString()}.</div>`;
     return;
@@ -157,6 +184,7 @@ function renderApproval(status) {
       ${branches.length} branch(es) against
       <span class="mono">${escapeHtml(status.repoPath)}</span> — review before this touches your real repo.
     </div>
+    ${renderMergeResultBanner(lastMergeResult)}
     ${branchesHtml}
     <div class="decision-answer-row" style="padding: 14px 18px;">
       <input type="text" id="approvedBy" class="by-input" placeholder="approved by (optional)" />

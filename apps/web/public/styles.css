@@ -294,6 +294,28 @@ code {
 .diff-del { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); }
 .diff-ctx { color: var(--text-muted); }
 
+.merge-result-banner {
+  margin: 0 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.merge-result-banner.ok { border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.merge-result-banner.fail { border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.merge-result-summary {
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg);
+}
+.merge-result-row {
+  padding: 7px 12px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border-soft);
+}
+.merge-result-row.ok { color: var(--success); }
+.merge-result-row.fail { color: var(--warn); }
+
 .live-dot {
   display: inline-block;
   width: 7px;
