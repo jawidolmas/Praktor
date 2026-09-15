@@ -123,6 +123,28 @@ main {
   line-height: 1.6;
 }
 
+.autostart-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+
+.autostart-option {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition: var(--ease);
+}
+.autostart-option:hover { border-color: var(--border); }
+.autostart-option code {
+  display: inline-block;
+  margin-bottom: 6px;
+  white-space: normal;
+  word-break: break-word;
+}
+.autostart-option .hint { font-size: 12px; margin: 0; }
+
 table { width: 100%; border-collapse: collapse; }
 
 th {

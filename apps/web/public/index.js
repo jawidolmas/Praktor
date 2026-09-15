@@ -1,3 +1,15 @@
+// The mode names ("logon" / "boot") come from the daemon's own autostart
+// vocabulary (@exec/db, via /api/daemon's autostartModes) rather than being
+// hardcoded here, so this can never say something the CLI itself disagrees
+// with about what a mode does.
+function autostartOption(mode, explanation) {
+  return `
+    <div class="autostart-option">
+      <code>exec-agent daemon install-autostart --mode ${escapeHtml(mode)}</code>
+      <div class="hint">${escapeHtml(explanation)}</div>
+    </div>`;
+}
+
 function renderDaemonStatus(data) {
   const el = document.getElementById("daemon-status");
   const runningBadge = data.running
@@ -5,15 +17,30 @@ function renderDaemonStatus(data) {
     : `<span class="badge status-failed">not running</span>`;
 
   const auto = data.autostart;
-  const autostartBadge = auto.installed
-    ? `<span class="badge status-done">autostart: ${escapeHtml(auto.mode || "registered")}</span>`
-    : `<span class="badge status-failed">autostart: not installed</span>`;
+  const modes = data.autostartModes || {};
 
-  const hint = auto.installed
-    ? ""
-    : `<div class="hint">Won't come back after a reboot. Set it up with: <code>exec-agent daemon install-autostart --mode logon|boot</code></div>`;
+  if (auto.installed) {
+    const mode = auto.mode && modes[auto.mode] ? auto.mode : undefined;
+    const autostartBadge = `<span class="badge status-done">autostart: ${escapeHtml(mode || "registered")}</span>`;
+    const hint = mode ? `<div class="hint">${escapeHtml(modes[mode])}</div>` : "";
+    el.innerHTML = `<div class="panel-body">${runningBadge} ${autostartBadge}${hint}</div>`;
+    return;
+  }
 
-  el.innerHTML = `<div class="panel-body">${runningBadge} ${autostartBadge}${hint}</div>`;
+  // Not installed: don't just point at "--mode logon|boot" — that "|" reads
+  // like a shell pipe to anyone who copies it into PowerShell (confirmed
+  // live: it does exactly that, piping into a nonexistent "boot" command).
+  // Show each mode as its own complete, copy-pasteable command instead.
+  const autostartBadge = `<span class="badge status-failed">autostart: not installed</span>`;
+  const options = Object.entries(modes)
+    .map(([mode, explanation]) => autostartOption(mode, explanation))
+    .join("");
+  el.innerHTML = `
+    <div class="panel-body">
+      ${runningBadge} ${autostartBadge}
+      <div class="hint">Won't come back after a reboot until one of these is set up — pick one:</div>
+    </div>
+    <div class="autostart-options">${options}</div>`;
 }
 
 // "Needs attention" is the default view on purpose: the whole point of a

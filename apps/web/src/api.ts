@@ -3,6 +3,7 @@ import {
   acceptedRuns,
   answerDecision,
   appendEvent,
+  AUTOSTART_MODE_EXPLANATIONS,
   autostartStatus,
   decisions,
   findRunningDaemon,
@@ -13,6 +14,7 @@ import {
   readEvents,
   runs,
   tasks,
+  type AutostartMode,
   type AutostartStatus,
   type Db,
 } from "@exec/db";
@@ -36,6 +38,11 @@ export interface DaemonStatusInfo {
   running: boolean;
   pid?: number;
   autostart: AutostartStatus;
+  /** Plain-language explanation per mode, straight from `@exec/db` — the one
+   *  place this text is written, so the CLI's own "which mode?" prompt and
+   *  the dashboard's hint can never drift into saying different things about
+   *  what "logon" or "boot" actually does. */
+  autostartModes: Record<AutostartMode, string>;
 }
 
 // `autostartStatus()` shells out to PowerShell to query Task Scheduler —
@@ -80,6 +87,7 @@ export function getDaemonStatus(): DaemonStatusInfo {
     running: pid !== undefined,
     ...(pid !== undefined ? { pid } : {}),
     autostart: cachedAutostart,
+    autostartModes: AUTOSTART_MODE_EXPLANATIONS,
   };
 }
 
