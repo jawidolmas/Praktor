@@ -17,14 +17,24 @@
       <div id="daemon-status"><div class="empty">Loading…</div></div>
     </section>
 
-    <section class="panel">
-      <h2>Objectives</h2>
-      <div id="objectives"><div class="empty">Loading…</div></div>
+    <section class="panel" id="decisionsPanel" hidden>
+      <h2>Decisions needing an answer</h2>
+      <div id="decisions"></div>
     </section>
 
     <section class="panel">
-      <h2>Decisions needing an answer</h2>
-      <div id="decisions"><div class="empty">Loading…</div></div>
+      <h2>Objectives</h2>
+      <div id="objective-summary" class="summary-row"></div>
+      <div class="toolbar">
+        <div class="filter-tabs" id="statusFilter">
+          <button class="filter-tab active" data-filter="attention">Needs attention</button>
+          <button class="filter-tab" data-filter="all">All</button>
+          <button class="filter-tab" data-filter="done">Done</button>
+          <button class="filter-tab" data-filter="failed">Failed</button>
+        </div>
+        <input type="text" id="objectiveSearch" class="search-input" placeholder="Filter by title or repo…" />
+      </div>
+      <div id="objectives"><div class="empty">Loading…</div></div>
     </section>
 
     <section class="panel">

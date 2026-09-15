@@ -38,19 +38,48 @@ export interface DaemonStatusInfo {
   autostart: AutostartStatus;
 }
 
+// `autostartStatus()` shells out to PowerShell to query Task Scheduler —
+// confirmed live at ~1.4s per call, every time, with no caching of its own.
+// `getDaemonStatus` is what `/api/daemon` calls on every poll of the
+// dashboard's most frequently hit endpoint (every few seconds), and since
+// better-sqlite3 and execFileSync are both synchronous, that 1.4s doesn't
+// just make one response slow — it blocks Node's single thread, stalling
+// every other concurrent request (other tabs, SSE streams, decision answers)
+// for the same window. Autostart registration only ever changes via an
+// explicit install/uninstall command, never on its own, so a cached value up
+// to `AUTOSTART_CACHE_MS` old costs nothing real. Refreshed on a background
+// interval, not lazily on request, so no request path ever pays that cost.
+const AUTOSTART_CACHE_MS = 30_000;
+let cachedAutostart: AutostartStatus = { installed: false };
+
+function refreshAutostartCache(fetcher: () => AutostartStatus): void {
+  cachedAutostart = fetcher();
+}
+
+/** Starts the background refresh — called once, at dashboard startup. Takes
+ *  the fetcher as a parameter (defaulting to the real one) purely so a test
+ *  can drive this with a fast, deterministic stand-in instead of a real
+ *  PowerShell call. */
+export function startAutostartStatusCache(
+  fetcher: () => AutostartStatus = autostartStatus,
+  intervalMs = AUTOSTART_CACHE_MS,
+): void {
+  refreshAutostartCache(fetcher);
+  setInterval(() => refreshAutostartCache(fetcher), intervalMs).unref();
+}
+
 /** Whether the daemon is actually running right now, and whether it's
  *  registered to come back on its own after a reboot — the second half is
  *  what "walk away for three days" depends on, and there's otherwise no way
- *  to tell from the dashboard that it was never set up at all. Not a DB
- *  read at all (it's OS process/Task-Scheduler state), unlike everything
- *  else in this file — still lives here so the server's route handlers all
- *  go through the one module. */
+ *  to tell from the dashboard that it was never set up at all. `running`/
+ *  `pid` are read fresh every call (a cheap pidfile + process-alive check);
+ *  only the slow autostart half is cached — see above. */
 export function getDaemonStatus(): DaemonStatusInfo {
   const pid = findRunningDaemon();
   return {
     running: pid !== undefined,
     ...(pid !== undefined ? { pid } : {}),
-    autostart: autostartStatus(),
+    autostart: cachedAutostart,
   };
 }
 

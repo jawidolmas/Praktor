@@ -195,6 +195,25 @@ function appendLogLines(events) {
   if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
 }
 
+// The detail panel (header/tasks/decisions) and the approval panel (which
+// shells out to `git diff` per branch — a real, non-trivial subprocess cost)
+// used to be re-fetched on a blind 2s timer, forever, for as long as the tab
+// stayed open — including the long stretches where nothing on this objective
+// has changed at all. The event stream already tells us exactly when
+// something did (a new event only exists because something happened), so a
+// refresh is scheduled from there instead: near-instant on a real change,
+// and zero wasted work the rest of the time. Debounced so a burst of events
+// (e.g. several turns in quick succession) coalesces into one refresh rather
+// than one per event.
+let refreshTimer;
+function scheduleRefresh(delayMs = 1000) {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = undefined;
+    refreshDetail().catch((err) => console.error(err));
+  }, delayMs);
+}
+
 function connectStream() {
   const dot = document.getElementById("liveDot");
   const label = document.getElementById("liveLabel");
@@ -212,6 +231,7 @@ function connectStream() {
     const data = JSON.parse(msg.data);
     if (data.backlog) appendLogLines(data.backlog);
     if (data.events) appendLogLines(data.events);
+    if (data.backlog?.length || data.events?.length) scheduleRefresh();
   };
 }
 
@@ -219,7 +239,10 @@ if (!objectiveId) {
   document.getElementById("headerPanel").innerHTML = '<div class="empty">No objective id in the URL.</div>';
 } else {
   refreshDetail().catch((err) => console.error(err));
-  setInterval(() => refreshDetail().catch((err) => console.error(err)), 2000);
+  // A long-interval fallback, not the primary mechanism — belt-and-suspenders
+  // in case a stream reconnect ever misses something, not a replacement for
+  // event-driven refresh above.
+  setInterval(() => refreshDetail().catch((err) => console.error(err)), 20_000);
   connectStream();
   window.addEventListener("decision-answered", () => refreshDetail().catch((err) => console.error(err)));
 }
