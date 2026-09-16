@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Whether — and how — the daemon is registered to start itself, so "walk
@@ -21,6 +23,31 @@ export interface AutostartStatus {
 }
 
 export const AUTOSTART_TASK_NAME = "PraktorDaemon";
+
+/**
+ * "logon" mode registers a Startup-folder entry instead of a Scheduled Task,
+ * unlike "boot" mode below it. Confirmed live, with Windows' own Task
+ * Scheduler operational event log: a Scheduled Task whose action is
+ * `cmd.exe /c "<launcher>"` — a perfectly standard, correctly-quoted
+ * definition, verified byte-for-byte against the exported task XML — still
+ * failed every time it was actually triggered, either with
+ * ERROR_INVALID_FUNCTION or, more surprising, a *reported success* that
+ * silently didn't execute anything at all. The same launcher runs correctly
+ * every other way it's ever invoked (`exec-agent daemon start`'s
+ * `Start-Process -FilePath`, a plain interactive `cmd.exe /c`) — only Task
+ * Scheduler's own process-creation path was affected, and only on this one
+ * machine, with no forensic trail explaining why (Defender was ruled out:
+ * zero detections, zero quarantine items). Rather than depend on a launch
+ * path proven unreliable here, "logon" mode uses the Startup folder, which
+ * goes through the ordinary shell file-execution path at login — the same
+ * mechanism, and the same reliability, as a user's own installed programs
+ * that start with Windows.
+ */
+export function startupFolderShortcutPath(): string | undefined {
+  const appData = process.env["APPDATA"];
+  if (!appData) return undefined;
+  return join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${AUTOSTART_TASK_NAME}.cmd`);
+}
 
 export const AUTOSTART_MODE_EXPLANATIONS: Record<AutostartMode, string> = {
   logon: "Starts the daemon when you next log into Windows. No special privileges needed.",
@@ -67,6 +94,14 @@ export function parseAutostartStatusOutput(stdout: string): AutostartStatus {
 
 export function autostartStatus(): AutostartStatus {
   if (process.platform !== "win32") return { installed: false };
+
+  // Checked first, and cheap (no PowerShell spawn) — this is what "logon"
+  // mode actually registers now. A Scheduled Task with a logon trigger can
+  // still show up here from an install done before this fix; still reported
+  // accurately (see the generic script below) so an old registration isn't
+  // silently hidden, but a fresh "logon" install never creates one.
+  const shortcut = startupFolderShortcutPath();
+  if (shortcut && existsSync(shortcut)) return { installed: true, mode: "logon" };
 
   const script = [
     `$t = Get-ScheduledTask -TaskName '${AUTOSTART_TASK_NAME}' -ErrorAction SilentlyContinue`,
