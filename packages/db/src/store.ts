@@ -930,5 +930,61 @@ export function markObjectiveMerged(db: Db, objectiveId: string): void {
     .run();
 }
 
+/** How long an approve lock is honored before it's treated as abandoned —
+ *  long enough for a real merge (shells out to git a handful of times) to
+ *  finish, short enough that a process that crashed mid-approve doesn't
+ *  block every future attempt forever. */
+const APPROVE_LOCK_STALE_MS = 2 * 60_000;
+
+function approveLockKey(objectiveId: string): string {
+  return `approve-lock:${objectiveId}`;
+}
+
+export interface ApproveLockResult {
+  acquired: boolean;
+  /** Set only when not acquired — who (CLI/dashboard) already holds it. */
+  heldBy?: string;
+}
+
+/**
+ * The CLI and the dashboard both merge and push directly into the real
+ * repo's working directory — there was nothing stopping both from doing
+ * that to the same objective at the same moment. Confirmed live: running
+ * `exec-agent approve` from a terminal while clicking Merge in the
+ * dashboard raced two separate `git checkout`/`git merge` sequences against
+ * the same repo. Nothing was corrupted that time (the underlying merge
+ * logic is itself safe to retry), but the interleaving was pure luck, not
+ * a guarantee.
+ *
+ * A single SQLite transaction makes the check-and-claim atomic across
+ * processes — better-sqlite3's own locking serializes concurrent writers,
+ * so two calls racing on the same key can never both see "unclaimed."
+ */
+export function tryAcquireApproveLock(db: Db, objectiveId: string, holder: string): ApproveLockResult {
+  return db.transaction((tx) => {
+    const key = approveLockKey(objectiveId);
+    const now = Date.now();
+    const existing = tx.select().from(settings).where(eq(settings.key, key)).get();
+    if (existing) {
+      const parsed = JSON.parse(existing.value) as { lockedAt: number; holder: string };
+      if (now - parsed.lockedAt < APPROVE_LOCK_STALE_MS) {
+        return { acquired: false, heldBy: parsed.holder };
+      }
+    }
+    tx.insert(settings)
+      .values({ key, value: JSON.stringify({ lockedAt: now, holder }) })
+      .onConflictDoUpdate({ target: settings.key, set: { value: JSON.stringify({ lockedAt: now, holder }) } })
+      .run();
+    return { acquired: true };
+  });
+}
+
+/** Always call once the merge attempt concludes, success or failure — via
+ *  try/finally, so a lock is never held longer than the operation it guards
+ *  actually takes. */
+export function releaseApproveLock(db: Db, objectiveId: string): void {
+  db.delete(settings).where(eq(settings.key, approveLockKey(objectiveId))).run();
+}
+
 export { objectives, tasks, runs, events, decisions, policies, memories, artifacts, settings };
 export { isNull };

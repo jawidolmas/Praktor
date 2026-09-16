@@ -6,8 +6,10 @@ import {
   markObjectiveMerged,
   objectives,
   openDb,
+  releaseApproveLock,
   runMigrations,
   tasks,
+  tryAcquireApproveLock,
 } from "@exec/db";
 import { attemptBranchName, computeApprovalDiffs, mergeAndPushAll } from "@exec/worker";
 
@@ -88,23 +90,41 @@ export async function approveObjective(objectiveId: string): Promise<void> {
     return;
   }
 
-  const result = mergeAndPushAll({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branches);
-  for (const b of result.branches) console.log(`  [${b.merged ? "OK" : "FAIL"}] ${b.branch} — ${b.message}`);
-  console.log(result.message);
-
-  if (result.allMerged) {
-    markObjectiveMerged(db, objectiveId);
-    appendEvent(db, {
-      objectiveId,
-      payload: {
-        type: "objective.approved",
-        branch: branches.join(", "),
-        baseRef: result.baseBranch,
-        pushed: result.pushed,
-        approvedBy: "cli-operator",
-      },
-    });
-  } else {
+  // Confirmed live: running this from the CLI while the dashboard's Merge
+  // button was also clicked on the same objective raced two independent
+  // git checkout/merge sequences against the same repo directory. The lock
+  // makes "someone else is already approving this" an explicit, clear
+  // outcome instead of an accidental interleaving.
+  const lock = tryAcquireApproveLock(db, objectiveId, "cli-operator");
+  if (!lock.acquired) {
+    console.error(
+      `This objective is already being approved elsewhere (by ${lock.heldBy ?? "another session"}) — try again shortly.`,
+    );
     process.exitCode = 1;
+    return;
+  }
+
+  try {
+    const result = mergeAndPushAll({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branches);
+    for (const b of result.branches) console.log(`  [${b.merged ? "OK" : "FAIL"}] ${b.branch} — ${b.message}`);
+    console.log(result.message);
+
+    if (result.allMerged) {
+      markObjectiveMerged(db, objectiveId);
+      appendEvent(db, {
+        objectiveId,
+        payload: {
+          type: "objective.approved",
+          branch: branches.join(", "),
+          baseRef: result.baseBranch,
+          pushed: result.pushed,
+          approvedBy: "cli-operator",
+        },
+      });
+    } else {
+      process.exitCode = 1;
+    }
+  } finally {
+    releaseApproveLock(db, objectiveId);
   }
 }

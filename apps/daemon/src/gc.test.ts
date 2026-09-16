@@ -154,6 +154,17 @@ describe("reclaimWorktrees", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it("always removes a leaked integration-branch scratch worktree, regardless of the objective's status — a crash mid-fold is the only way one is ever seen here", () => {
+    const objective = addObjective("active");
+    const path = join(worktreesDir, `${objective.id}-integration-scratch`);
+    mkdirSync(path, { recursive: true });
+
+    const result = reclaimWorktrees(db, worktreesDir);
+
+    expect(result.removed).toBe(1);
+    expect(existsSync(path)).toBe(false);
+  });
+
   it("leaves a directory it can't confidently place — no matching task row — untouched by default reclaim rules, only removing it because nothing references it", () => {
     const orphanId = newId();
     const path = join(worktreesDir, `${orphanId}-1`);

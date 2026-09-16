@@ -22,10 +22,12 @@ import {
   readEvents,
   readyTasks,
   reconcileObjective,
+  releaseApproveLock,
   schedulableObjectives,
   setObjectiveStatus,
   setSetting,
   setTaskStatus,
+  tryAcquireApproveLock,
   unnotifiedDecisions,
   writeArtifact,
   type TaskResultContent,
@@ -387,6 +389,39 @@ describe("markObjectiveMerged", () => {
     markObjectiveMerged(db, objectiveId);
     const row = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
     expect(row?.mergedAt).toBeTypeOf("number");
+  });
+});
+
+describe("tryAcquireApproveLock / releaseApproveLock", () => {
+  it("acquires an unclaimed lock", () => {
+    const result = tryAcquireApproveLock(db, objectiveId, "cli-operator");
+    expect(result).toEqual({ acquired: true });
+  });
+
+  it("refuses a second acquire while the first is still held, naming the holder", () => {
+    tryAcquireApproveLock(db, objectiveId, "cli-operator");
+    const second = tryAcquireApproveLock(db, objectiveId, "dashboard");
+    expect(second).toEqual({ acquired: false, heldBy: "cli-operator" });
+  });
+
+  it("lets a new acquire succeed once the previous holder releases it", () => {
+    tryAcquireApproveLock(db, objectiveId, "cli-operator");
+    releaseApproveLock(db, objectiveId);
+    const second = tryAcquireApproveLock(db, objectiveId, "dashboard");
+    expect(second).toEqual({ acquired: true });
+  });
+
+  it("treats a lock older than the stale window as abandoned, not held", () => {
+    setSetting(db, `approve-lock:${objectiveId}`, JSON.stringify({ lockedAt: Date.now() - 3 * 60_000, holder: "crashed-cli" }));
+    const result = tryAcquireApproveLock(db, objectiveId, "dashboard");
+    expect(result).toEqual({ acquired: true });
+  });
+
+  it("locks are independent per objective", () => {
+    const other = newId();
+    tryAcquireApproveLock(db, objectiveId, "cli-operator");
+    const result = tryAcquireApproveLock(db, other, "dashboard");
+    expect(result).toEqual({ acquired: true });
   });
 });
 

@@ -294,6 +294,15 @@ code {
 .diff-del { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); }
 .diff-ctx { color: var(--text-muted); }
 
+.merge-confirm {
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-elevated));
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.merge-confirm-text { font-size: 13px; margin-bottom: 10px; }
+.merge-confirm-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
 .merge-result-banner {
   margin: 0 18px 14px;
   border: 1px solid var(--border);

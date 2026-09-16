@@ -2,7 +2,9 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { objectives, tasks, type Db } from "@exec/db";
-import { attemptBranchName, removeWorktree } from "@exec/worker";
+import { attemptBranchName, integrationBranchName, removeWorktree } from "@exec/worker";
+
+const INTEGRATION_SCRATCH_SUFFIX = "-integration-scratch";
 
 /**
  * Worktree reclamation — the other half of what `driveTask`'s own cleanup
@@ -107,6 +109,25 @@ export function reclaimWorktrees(db: Db, worktreesDir: string): ReclaimResult {
     try {
       if (!statSync(path).isDirectory()) continue;
     } catch {
+      continue;
+    }
+
+    // An integration-branch scratch worktree only ever exists for the
+    // duration of one fold (foldIntoIntegrationBranch removes it itself,
+    // success or failure) — seeing one here at all means a crash happened
+    // mid-fold. Whatever it holds is either already captured in the
+    // integration branch ref or was never going to be, so it's always safe
+    // to remove outright, independent of the owning objective's status.
+    if (name.endsWith(INTEGRATION_SCRATCH_SUFFIX)) {
+      const objectiveId = name.slice(0, -INTEGRATION_SCRATCH_SUFFIX.length);
+      const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+      removeWorktree({
+        repoPath: objective?.repoPath ?? path,
+        path,
+        branch: objective ? integrationBranchName(objective.id) : "",
+        baseSha: "",
+      });
+      removed++;
       continue;
     }
 

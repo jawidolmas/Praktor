@@ -12,8 +12,10 @@ import {
   objectives,
   policies,
   readEvents,
+  releaseApproveLock,
   runs,
   tasks,
+  tryAcquireApproveLock,
   type AutostartMode,
   type AutostartStatus,
   type Db,
@@ -267,22 +269,37 @@ export function approveObjective(db: Db, objectiveId: string, approvedBy: string
   const accepted = acceptedRuns(db, objectiveId);
   if (accepted.length === 0) return { ok: false, message: "Nothing to approve." };
 
-  const branchNames = accepted.map((a) => attemptBranchName(a.taskId, a.attempt));
-  const result = mergeAndPushAll({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branchNames);
-
-  if (result.allMerged) {
-    markObjectiveMerged(db, objectiveId);
-    appendEvent(db, {
-      objectiveId,
-      payload: {
-        type: "objective.approved",
-        branch: branchNames.join(", "),
-        baseRef: result.baseBranch,
-        pushed: result.pushed,
-        approvedBy,
-      },
-    });
+  // Confirmed live: the CLI and the dashboard both merge and push straight
+  // into the real repo's working directory, with nothing stopping both from
+  // doing that to the same objective at once. The lock is shared with the
+  // CLI's own approve command (same DB row), so whichever gets there first
+  // wins and the other gets a clear "already in progress" instead of an
+  // accidental race between two git checkout/merge sequences.
+  const lock = tryAcquireApproveLock(db, objectiveId, approvedBy);
+  if (!lock.acquired) {
+    return { ok: false, message: `Already being approved elsewhere (by ${lock.heldBy ?? "another session"}) — try again shortly.` };
   }
 
-  return { ok: result.allMerged, message: result.message, branches: result.branches };
+  try {
+    const branchNames = accepted.map((a) => attemptBranchName(a.taskId, a.attempt));
+    const result = mergeAndPushAll({ repoPath: accepted[0]!.repoPath, baseRef: accepted[0]!.baseRef }, branchNames);
+
+    if (result.allMerged) {
+      markObjectiveMerged(db, objectiveId);
+      appendEvent(db, {
+        objectiveId,
+        payload: {
+          type: "objective.approved",
+          branch: branchNames.join(", "),
+          baseRef: result.baseBranch,
+          pushed: result.pushed,
+          approvedBy,
+        },
+      });
+    }
+
+    return { ok: result.allMerged, message: result.message, branches: result.branches };
+  } finally {
+    releaseApproveLock(db, objectiveId);
+  }
 }

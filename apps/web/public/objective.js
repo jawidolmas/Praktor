@@ -186,12 +186,45 @@ function renderApproval(status) {
     </div>
     ${renderMergeResultBanner(lastMergeResult)}
     ${branchesHtml}
-    <div class="decision-answer-row" style="padding: 14px 18px;">
+    <div class="decision-answer-row" id="mergeActionRow" style="padding: 14px 18px;">
       <input type="text" id="approvedBy" class="by-input" placeholder="approved by (optional)" />
       <button class="option-btn recommended" id="mergeBtn">Merge ${branches.length} branch(es) &amp; push</button>
     </div>
   `;
-  document.getElementById("mergeBtn").addEventListener("click", () => mergeApproved().catch((err) => console.error(err)));
+  document.getElementById("mergeBtn").addEventListener("click", () => showMergeConfirm(status));
+}
+
+// A native confirm() reads as a generic browser warning, not a considered
+// "yes" specific to what's about to happen — and it can't be styled to match
+// what it's actually confirming. This replaces it with an in-panel step:
+// the merge button gives way to an explicit warning plus a real Confirm/
+// Cancel pair, in the same visual language as everything else on this page.
+function showMergeConfirm(status) {
+  const row = document.getElementById("mergeActionRow");
+  if (!row) return;
+  const branchCount = (status.branches || []).length;
+  row.innerHTML = `
+    <div class="merge-confirm">
+      <div class="merge-confirm-text">
+        Merge ${branchCount} branch(es) into <span class="mono">${escapeHtml(status.repoPath)}</span> and push? This writes to your real repo.
+      </div>
+      <div class="merge-confirm-actions">
+        <input type="text" id="approvedBy" class="by-input" placeholder="approved by (optional)" />
+        <button class="option-btn" id="mergeCancelBtn">Cancel</button>
+        <button class="option-btn recommended" id="mergeConfirmBtn">Yes, merge &amp; push</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("mergeCancelBtn").addEventListener("click", () => renderApprovalForced(status));
+  document.getElementById("mergeConfirmBtn").addEventListener("click", () => mergeApproved().catch((err) => console.error(err)));
+}
+
+/** Re-renders the panel even though `status` hasn't changed — used only to
+ *  back out of the confirm step, since `renderApproval`'s own memoization
+ *  would otherwise see the identical status and skip rebuilding the row. */
+function renderApprovalForced(status) {
+  lastApprovalKey = undefined;
+  renderApproval(status);
 }
 
 async function refreshApproval() {

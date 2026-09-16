@@ -29,8 +29,10 @@ import {
   churn,
   commitAll,
   createWorktree,
+  foldIntoIntegrationBranch,
   removeWorktree,
   renderCheckpointNote,
+  resolveTaskBaseRef,
   runAcceptance,
   runWorker,
   type RunWorkerResult,
@@ -155,11 +157,17 @@ async function runAttempt(
 ): Promise<AttemptOutcome> {
   const branch = attemptBranchName(task.id, attempt);
   const worktreePath = worktreePathFor(task.id, attempt);
+  const baseRef = resolveTaskBaseRef({
+    repoPath: objective.repoPath,
+    objectiveId: objective.id,
+    objectiveBaseRef: objective.baseRef,
+    dependsOn: task.dependsOn,
+  });
   const worktree = createWorktree({
     repoPath: objective.repoPath,
     worktreePath,
     branch,
-    baseRef: objective.baseRef,
+    baseRef,
   });
 
   let note = initialNote;
@@ -431,6 +439,27 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
       committed = commitAll(worktree.path, `${task.title}\n\n${result.resultText ?? ""}`.trim());
       finalStatus = "done";
       setTaskStatus(db, task.id, "done");
+
+      // Fold this task's branch into the objective's integration branch so a
+      // task that depends on this one actually sees these files in its own
+      // worktree, instead of starting from the same base every sibling task
+      // does. Best-effort: a fold conflict doesn't touch this task's own
+      // already-committed, already-accepted result — it only means a future
+      // dependent task won't see this one's changes automatically and may
+      // need to ask, same as before this existed.
+      const fold = foldIntoIntegrationBranch({
+        repoPath: objective.repoPath,
+        objectiveId: objective.id,
+        objectiveBaseRef: objective.baseRef,
+        taskBranch: worktree.branch,
+        worktreesDir: worktreesDir(),
+      });
+      appendEvent(db, {
+        objectiveId: objective.id,
+        taskId: task.id,
+        runId,
+        payload: { type: "note", message: fold.ok ? fold.message : `Integration: ${fold.message}` },
+      });
       break;
     }
 
