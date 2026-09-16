@@ -1,0 +1,49 @@
+{
+  "version": "0.1.0",
+  "asOf": "2026-09-16",
+  "features": [
+    "Plain-English intake — `exec-agent do \"...\"` resolves the repo and infers a check, or hands off to the planner",
+    "Multi-task decomposition — one brain call breaks an objective into a dependency-ordered task graph",
+    "Per-objective failure policy — escalate | abandon | skip when a task exhausts its attempts",
+    "Persistent supervisor daemon — closing the terminal, or the laptop, does not stop the work",
+    "git worktree isolation — a dedicated branch per attempt, nothing runs against your working tree",
+    "Policy engine — denies or asks about force-push, prod deploys, destructive SQL, committed secrets",
+    "Verification gate — the supervisor runs your real acceptance command; a worker's own \"done\" is advisory",
+    "Checkpoint & respawn — a fresh worker is seeded with what was tried and ruled out, not a longer chat",
+    "Rate-limit park-and-resume — retried in place once the limit clears, never burns the attempt budget",
+    "Decisions answerable anywhere — terminal, `exec-agent decide`, the dashboard, or Telegram",
+    "Human approval gate — a diff per branch and a Merge button; nothing is ever merged automatically",
+    "Full event log per objective — `exec-agent events <id>`, replayable, the actual source of truth",
+    "Daemon autostart on login/reboot — with visibility in the dashboard"
+  ],
+  "log": [
+    {
+      "date": "2026-09-16",
+      "entries": [
+        "Fixed a real CRLF conflict in the integration-branch fold, found live",
+        "Fixed \"logon\" autostart never actually launching the daemon",
+        "Fixed dependent-task blindness, approve races, and native merge confirms"
+      ]
+    },
+    {
+      "date": "2026-09-15",
+      "entries": [
+        "Dashboard now shows which branch failed to merge, and why — not a generic alert",
+        "Fixed the \"--mode logon|boot\" ambiguity in both the CLI's output and the dashboard",
+        "Fixed a 1.4s blocking call on the dashboard's hottest endpoint",
+        "Fixed multi-task objectives only merging one branch on approve"
+      ]
+    },
+    {
+      "date": "2026-09-12",
+      "entries": [
+        "Added daemon autostart-on-reboot, with dashboard visibility",
+        "Acceptance checks now run through Git's bundled bash, not cmd.exe",
+        "Worktree checkouts made immune to the host's core.autocrlf",
+        "Added an objective-level completion report instead of one task's story",
+        "Fixed abandon leaving unrelated sibling tasks orphaned forever",
+        "Fixed stale L3 decisions being replayed forever, ignoring later answers"
+      ]
+    }
+  ]
+}
