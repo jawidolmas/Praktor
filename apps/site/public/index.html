@@ -36,7 +36,7 @@
   <main id="top">
 
     <!-- ============ HERO ============ -->
-    <section class="hero">
+    <section class="hero theme-blue">
       <canvas class="hero-canvas" id="heroCanvas" aria-hidden="true"></canvas>
       <div class="hero-copy reveal">
         <p class="eyebrow"><span class="dot dot-pulse"></span>v0.1 — actively driving real objectives</p>
@@ -243,10 +243,10 @@
                 <div id="pk-chord-labels"></div>
 
                 <div style="position:absolute;left:1100px;top:1100px;width:0;height:0;--r:.004;opacity:clamp(0, calc((var(--p,0) - var(--r)) * 40), 1)">
-                  <div style="transform:translate(-50%,-50%) scale(clamp(.86, calc(.86 + (var(--p,0) - var(--r)) * 8), 1));width:268px;padding:22px 24px;box-sizing:border-box;background:var(--color-surface);border:1px solid var(--color-accent-700);border-radius:var(--radius-md,8px);box-shadow:0 0 44px var(--color-accent-900),0 18px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:8px">
-                    <span style="font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--color-accent-400)">The supervisor</span>
-                    <span style="font-family:var(--font-heading);font-weight:500;font-size:34px;line-height:1;letter-spacing:-.02em">Praktor</span>
-                    <span style="font-size:13px;line-height:1.45;color:var(--color-neutral-400)">A persistent daemon. Closing the terminal — or the laptop — does not stop the work.</span>
+                  <div style="transform:translate(-50%,-50%) scale(clamp(.86, calc(.86 + (var(--p,0) - var(--r)) * 8), 1));width:268px;padding:22px 24px;box-sizing:border-box;background:var(--color-surface);border:1px solid var(--color-card-border);border-radius:var(--radius-md,8px);box-shadow:0 0 44px var(--color-accent-900),0 18px 50px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:8px">
+                    <span style="font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--color-card-kicker)">The supervisor</span>
+                    <span style="font-family:var(--font-heading);font-weight:500;font-size:34px;line-height:1;letter-spacing:-.02em;color:var(--color-card-text)">Praktor</span>
+                    <span style="font-size:13px;line-height:1.45;color:var(--color-card-muted)">A persistent daemon. Closing the terminal — or the laptop — does not stop the work.</span>
                   </div>
                 </div>
 
@@ -260,7 +260,7 @@
             <div id="pk-bar" style="position:absolute;left:0;top:0;width:100%;height:0;background:var(--color-accent-500)"></div>
           </div>
 
-          <div style="position:absolute;right:26px;top:24px;display:flex;align-items:center;gap:16px;padding:7px 8px 7px 16px;background:color-mix(in srgb, var(--color-bg) 86%, transparent);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md,8px);backdrop-filter:blur(6px)">
+          <div style="position:absolute;right:26px;top:24px;display:flex;align-items:center;gap:16px;padding:7px 8px 7px 16px;background:rgba(255,255,255,.14);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md,8px);backdrop-filter:blur(6px)">
             <span id="pk-counter" style="font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;letter-spacing:.12em;color:var(--color-neutral-500);white-space:nowrap"></span>
             <button type="button" class="pk-btn-secondary" id="pk-toggle-overview" style="font-size:12.5px;letter-spacing:.06em;white-space:nowrap">See it whole</button>
           </div>
@@ -311,7 +311,7 @@
     </section>
 
     <!-- ============ QUICKSTART ============ -->
-    <section class="quickstart" id="quickstart">
+    <section class="quickstart theme-blue" id="quickstart">
       <h2 class="section-heading reveal">Quickstart</h2>
       <p class="lede reveal">
         No API key, no separate billing — it piggybacks on your existing Claude Code login.

@@ -1,28 +1,82 @@
 :root {
-  --bg: #0a0b0d;
-  --bg-elevated: #111318;
-  --bg-panel: #14161c;
-  --border: #22252c;
-  --border-soft: #1a1c22;
-  --text: #e7e9ee;
-  --text-muted: #8b93a1;
-  --text-dim: #5c6270;
+  /* Light by default — most sections read as a clean, white/near-white page.
+     The brand blue is reserved for a few deliberate full-bleed sections
+     (.theme-blue below), not washed across everything. */
+  --bg: #f7f9fc;
+  --bg-elevated: #ffffff;
+  --bg-panel: #eef2f8;
+  --border: #dde4ee;
+  --border-soft: #e8ecf3;
+  --text: #0b1220;
+  --text-muted: #4b5568;
+  --text-dim: #7c869b;
 
   --accent: #066ce7;      /* brand blue — buttons, icons, large text, borders */
-  --accent-text: #4c9aff; /* lightened for small inline text/links on dark bg */
-  --accent-weak: rgba(6, 108, 231, 0.12);
+  --accent-text: #066ce7; /* same on a light ground — the paler #4c9aff was tuned for dark backgrounds and washes out here */
+  --accent-weak: rgba(6, 108, 231, 0.08);
   --accent-glow: rgba(6, 108, 231, 0.35);
 
-  --success: #4ade80;
-  --warn: #fbbf24;
-  --error: #f87171;
+  --success: #15803d;
+  --warn: #b45309;
+  --error: #dc2626;
 
   --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 
   --radius: 10px;
   --radius-sm: 6px;
   --max: 1120px;
+
+  /* A terminal/code window is always dark — that's the visual convention that
+     makes it read as "a terminal" — regardless of whether the section around
+     it is light or the brand-blue theme below. Fixed, not theme-dependent. */
+  --term-bg: #0f1c2b;
+  --term-panel: #142336;
+  --term-border: #233b57;
+  --term-text: #e7e9ee;
+  --term-text-dim: #8b93a1;
+  --term-accent-text: #4c9aff;
+  --term-success: #4ade80;
+  --term-warn: #fbbf24;
+  --term-error: #f87171;
 }
+
+/* ---------- theme-blue: opt-in full-bleed brand-color sections ---------- */
+.theme-blue {
+  --bg: #066ce7;
+  --bg-elevated: #247eea;
+  --bg-panel: #3889ec;
+  --border: rgba(255, 255, 255, 0.28);
+  --border-soft: rgba(255, 255, 255, 0.16);
+  --text: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.88);
+  --text-dim: rgba(255, 255, 255, 0.64);
+  --accent-text: #ffffff; /* the brand blue itself is now the ground, so "accent" emphasis on this ground means white, not more blue */
+  --accent-weak: rgba(255, 255, 255, 0.16);
+  --accent-glow: rgba(255, 255, 255, 0.45);
+  background: var(--bg);
+  color: var(--text);
+  /* break out of <main>'s centered column so the color goes edge-to-edge,
+     then rebuild that same centered reading column with padding instead,
+     so the content inside doesn't stretch the full viewport width too */
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+  padding-left: calc((100vw - min(100vw, var(--max))) / 2 + 24px);
+  padding-right: calc((100vw - min(100vw, var(--max))) / 2 + 24px);
+  box-sizing: border-box;
+}
+/* A solid-blue button on a solid-blue section is invisible — invert it. */
+.theme-blue .btn-primary {
+  background: #fff;
+  color: var(--accent);
+  border-color: transparent;
+}
+.theme-blue .btn-primary:hover { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25); }
+.theme-blue .btn-ghost { border-color: rgba(255, 255, 255, 0.5); color: #fff; }
+.theme-blue .btn-ghost:hover { border-color: #fff; color: #fff; background: rgba(255, 255, 255, 0.12); }
+.theme-blue .dot { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5); }
+.theme-blue .brand .prompt,
+.theme-blue .accent-text { color: #fff; }
 
 * { box-sizing: border-box; }
 
@@ -38,7 +92,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: var(--accent-glow); color: #fff; }
+::selection { background: rgba(0, 0, 0, 0.4); color: #fff; }
 
 a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -62,6 +116,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.01em; }
   height: 7px;
   border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4); /* the fill alone matches --bg exactly now */
   vertical-align: middle;
   margin-bottom: 2px;
 }
@@ -145,7 +200,7 @@ section { padding: 84px 0; }
   color: var(--text);
 }
 .brand:hover { text-decoration: none; }
-.brand .prompt { color: var(--accent); margin-right: 6px; animation: prompt-glow 3s ease-in-out infinite; }
+.brand .prompt { color: var(--accent-text); margin-right: 6px; animation: prompt-glow 3s ease-in-out infinite; }
 @keyframes prompt-glow {
   0%, 100% { text-shadow: 0 0 0 rgba(6, 108, 231, 0); }
   50% { text-shadow: 0 0 8px var(--accent-glow); }
@@ -177,9 +232,12 @@ section { padding: 84px 0; }
 .btn-primary {
   background: var(--accent);
   color: #fff;
+  /* --bg is the same exact blue now — the border is what makes this
+     still read as a button sitting on the page, not just a patch of it. */
+  border-color: rgba(255, 255, 255, 0.55);
   box-shadow: 0 0 0 0 var(--accent-glow);
 }
-.btn-primary:hover { box-shadow: 0 4px 24px var(--accent-glow); }
+.btn-primary:hover { box-shadow: 0 4px 24px var(--accent-glow); border-color: #fff; }
 
 .btn-ghost {
   background: transparent;
@@ -239,8 +297,8 @@ section { padding: 84px 0; }
 /* ---------- terminal window ---------- */
 
 .term-window {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
   border-radius: var(--radius);
   overflow: hidden;
   box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
@@ -251,8 +309,8 @@ section { padding: 84px 0; }
   align-items: center;
   gap: 7px;
   padding: 11px 14px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-soft);
+  background: var(--term-panel);
+  border-bottom: 1px solid var(--term-border);
 }
 
 .term-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; opacity: 0.85; }
@@ -260,20 +318,20 @@ section { padding: 84px 0; }
 .term-dot-y { background: #febc2e; }
 .term-dot-g { background: #28c840; }
 
-.term-title { margin-left: 8px; color: var(--text-dim); font-size: 12px; }
+.term-title { margin-left: 8px; color: var(--term-text-dim); font-size: 12px; }
 
 .term-body { padding: 22px 20px; min-height: 132px; font-size: 14px; }
 
-.term-line { margin: 0 0 10px; color: var(--text); word-break: break-word; }
-.term-prompt { color: var(--accent-text); }
+.term-line { margin: 0 0 10px; color: var(--term-text); word-break: break-word; }
+.term-prompt { color: var(--accent); }
 
 .term-out { margin: 0 0 8px; font-size: 13px; padding-left: 4px; }
-.term-out-dim { color: var(--text-dim); }
-.term-out-accent { color: var(--accent-text); }
-.term-out-ok { color: var(--success); }
-.term-out-warn { color: var(--warn); border-radius: 4px; }
-.term-out-add { color: var(--success); }
-.term-out-del { color: var(--error); }
+.term-out-dim { color: var(--term-text-dim); }
+.term-out-accent { color: var(--term-accent-text); }
+.term-out-ok { color: var(--term-success); }
+.term-out-warn { color: var(--term-warn); border-radius: 4px; }
+.term-out-add { color: var(--term-success); }
+.term-out-del { color: var(--term-error); }
 
 .cursor {
   display: inline-block;
@@ -387,7 +445,7 @@ section { padding: 84px 0; }
   min-width: 172px;
   max-width: 222px;
   padding: 9px 11px;
-  background: rgba(10, 11, 13, 0.94);
+  background: rgba(10, 19, 31, 0.94);
   border: 1px dashed var(--accent);
   border-radius: 6px;
   opacity: 0;
@@ -472,29 +530,41 @@ section { padding: 84px 0; }
    Praktor's brand palette instead of its purple accent) ---------- */
 
 #how-it-works {
-  --color-bg: var(--bg);
-  --color-surface: var(--bg-elevated);
-  --color-text: var(--text);
-  --color-divider: var(--border);
+  /* This section stays the brand blue regardless of the light/blue theme
+     used elsewhere on the page — fixed, not inherited, so it can't drift if
+     the rest of the site's palette changes again. Everything sitting
+     directly ON the blue canvas (leaves, groups, chords, edges, the toggle
+     pill) uses white/white-alpha; everything inside a white CARD (the
+     phase cards, the centre "Praktor" card) uses the dedicated --color-card-*
+     tokens below instead, since a card needs dark-on-white, not white-on-blue. */
+  --color-bg: #066ce7;
+  --color-surface: #ffffff;
+  --color-text: #ffffff;
+  --color-divider: rgba(255, 255, 255, 0.4);
 
-  --color-neutral-300: color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%);
-  --color-neutral-400: var(--text-muted);
-  --color-neutral-500: color-mix(in srgb, var(--text-muted) 55%, var(--text-dim) 45%);
-  --color-neutral-600: var(--text-dim);
-  --color-neutral-700: var(--text-dim);
-  --color-neutral-800: var(--border);
-  --color-neutral-900: var(--border-soft);
+  --color-card-border: rgba(6, 108, 231, 0.22);
+  --color-card-kicker: #066ce7;
+  --color-card-text: #0b1220;
+  --color-card-muted: #4b5568;
 
-  --color-accent: var(--accent-text);
-  --color-accent-100: #eef5ff;
-  --color-accent-200: #dbe9ff;
-  --color-accent-300: #b9d6ff;
-  --color-accent-400: #8bbdff;
-  --color-accent-500: var(--accent-text);
-  --color-accent-600: var(--accent);
-  --color-accent-700: #0554b8;
-  --color-accent-800: #0a3d85;
-  --color-accent-900: #0b2850;
+  --color-neutral-300: rgba(255, 255, 255, 0.92);
+  --color-neutral-400: rgba(255, 255, 255, 0.8);
+  --color-neutral-500: rgba(255, 255, 255, 0.68);
+  --color-neutral-600: rgba(255, 255, 255, 0.55);
+  --color-neutral-700: rgba(255, 255, 255, 0.55);
+  --color-neutral-800: rgba(255, 255, 255, 0.32);
+  --color-neutral-900: rgba(255, 255, 255, 0.2);
+
+  --color-accent: #ffffff;
+  --color-accent-100: #ffffff;
+  --color-accent-200: #ffffff;
+  --color-accent-300: rgba(255, 255, 255, 0.85);
+  --color-accent-400: #ffffff;
+  --color-accent-500: #ffffff;
+  --color-accent-600: #ffffff;
+  --color-accent-700: rgba(255, 255, 255, 0.55);
+  --color-accent-800: rgba(255, 255, 255, 0.45);
+  --color-accent-900: rgba(6, 108, 231, 0.35); /* a soft brand-blue halo — behind the whole graph, and around cards */
 
   --font-heading: "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, sans-serif;
@@ -691,7 +761,7 @@ section { padding: 84px 0; }
 
 .statusfeed-features { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
 .statusfeed-features li { font-size: 13px; line-height: 1.55; color: var(--text-muted); padding-left: 18px; position: relative; }
-.statusfeed-features li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+.statusfeed-features li::before { content: "▸"; position: absolute; left: 0; color: var(--accent-text); }
 .statusfeed-features code { color: var(--accent-text); }
 
 .statusfeed-log { display: flex; flex-direction: column; gap: 20px; }
@@ -720,8 +790,8 @@ section { padding: 84px 0; }
 }
 
 .code-block {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -731,10 +801,10 @@ section { padding: 84px 0; }
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-soft);
+  background: var(--term-panel);
+  border-bottom: 1px solid var(--term-border);
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--term-text-dim);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -742,9 +812,9 @@ section { padding: 84px 0; }
 .copy-btn {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--accent-text);
-  background: var(--accent-weak);
-  border: 1px solid var(--border);
+  color: var(--term-accent-text);
+  background: rgba(76, 154, 255, 0.12);
+  border: 1px solid var(--term-border);
   border-radius: 5px;
   padding: 4px 9px;
   cursor: pointer;
@@ -752,12 +822,12 @@ section { padding: 84px 0; }
   letter-spacing: 0;
   transition: border-color 0.15s ease;
 }
-.copy-btn:hover { border-color: var(--accent); }
+.copy-btn:hover { border-color: var(--term-accent-text); }
 
 .code-block pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-size: 13px; line-height: 1.8; }
-.code-block code { background: none; padding: 0; color: var(--text); }
-.c-muted { color: var(--text-dim); }
-.c-str { color: var(--success); }
+.code-block code { background: none; padding: 0; color: var(--term-text); }
+.c-muted { color: var(--term-text-dim); }
+.c-str { color: var(--term-success); }
 
 .prereqs {
   list-style: none;
@@ -770,7 +840,7 @@ section { padding: 84px 0; }
   font-size: 13px;
   color: var(--text-muted);
 }
-.prereqs li::before { content: "· "; color: var(--accent); }
+.prereqs li::before { content: "· "; color: var(--accent-text); }
 
 /* ---------- footer ---------- */
 
