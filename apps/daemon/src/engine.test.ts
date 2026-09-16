@@ -11,7 +11,13 @@ import {
   type ObjectiveRow,
   type TaskRow,
 } from "@exec/db";
-import { applyAnsweredFailureDecisions, clampParkDelay, handlePermanentFailure } from "./engine.js";
+import {
+  applyAnsweredFailureDecisions,
+  clampParkDelay,
+  handlePermanentFailure,
+  planRecoverySeed,
+  shouldEscalateImmediately,
+} from "./engine.js";
 
 const BUDGET = { maxTurns: 40, maxTokens: 400_000, maxWallClockMs: 1_800_000 };
 const ACCEPTANCE = { checks: [{ label: "tests", command: "npm test", expectExitCode: 0, timeoutMs: 60_000 }] };
@@ -68,6 +74,55 @@ describe("clampParkDelay", () => {
 
   it("passes through a hint already inside the sane window", () => {
     expect(clampParkDelay(5 * 60_000)).toBe(5 * 60_000);
+  });
+});
+
+const MECHANICAL = { note: "mechanical checkpoint note", ruledOut: ["mechanical ruled-out approach"] };
+
+describe("planRecoverySeed", () => {
+  it("carries nothing forward for 'retry' — a flaky failure is not a ruled-out approach", () => {
+    const seed = planRecoverySeed("retry", MECHANICAL);
+    expect(seed).toEqual({ ruledOutAdditions: [], checkpointNote: undefined });
+  });
+
+  it("seeds the diagnoser's own hint and ruled-out list for 'retry_with_hint'", () => {
+    const seed = planRecoverySeed("retry_with_hint", MECHANICAL, {
+      hint: "Try clamping the index instead of checking bounds first",
+      ruledOut: ["checking bounds before indexing"],
+    });
+    expect(seed).toEqual({
+      ruledOutAdditions: ["checking bounds before indexing"],
+      checkpointNote: "Try clamping the index instead of checking bounds first",
+    });
+  });
+
+  it("falls back to the mechanical checkpoint note for 'retry_with_hint' with no hint given", () => {
+    const seed = planRecoverySeed("retry_with_hint", MECHANICAL, { ruledOut: [] });
+    expect(seed.checkpointNote).toBe(MECHANICAL.note);
+  });
+
+  it("uses the full mechanical checkpoint for 'respawn'", () => {
+    const seed = planRecoverySeed("respawn", MECHANICAL);
+    expect(seed).toEqual({ ruledOutAdditions: MECHANICAL.ruledOut, checkpointNote: MECHANICAL.note });
+  });
+
+  it("also falls back to the mechanical checkpoint when no diagnosis was made (classifier failed or was skipped)", () => {
+    const seed = planRecoverySeed(undefined, MECHANICAL);
+    expect(seed).toEqual({ ruledOutAdditions: MECHANICAL.ruledOut, checkpointNote: MECHANICAL.note });
+  });
+});
+
+describe("shouldEscalateImmediately", () => {
+  it("is true for 'escalate' and 'abandon'", () => {
+    expect(shouldEscalateImmediately("escalate")).toBe(true);
+    expect(shouldEscalateImmediately("abandon")).toBe(true);
+  });
+
+  it("is false for every action that should continue the attempt loop, and when there's no diagnosis", () => {
+    expect(shouldEscalateImmediately("retry")).toBe(false);
+    expect(shouldEscalateImmediately("retry_with_hint")).toBe(false);
+    expect(shouldEscalateImmediately("respawn")).toBe(false);
+    expect(shouldEscalateImmediately(undefined)).toBe(false);
   });
 });
 

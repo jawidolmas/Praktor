@@ -1,7 +1,32 @@
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
-import { DecomposeOutput, type DecomposeOutput as DecomposeOutputT } from "@exec/core";
+import {
+  DecomposeOutput,
+  DiagnoseOutput,
+  ReviewOutput,
+  type DecomposeOutput as DecomposeOutputT,
+  type DiagnoseOutput as DiagnoseOutputT,
+  type ReviewOutput as ReviewOutputT,
+  type TokenUsage,
+} from "@exec/core";
 import { buildRepoBriefing, renderBriefing } from "./briefing.js";
+import { diffPatch } from "./worktree.js";
+import type { StallSignal } from "./telemetry.js";
+import type { VerifyOutcome } from "./verify.js";
+
+const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+
+const toTokenUsage = (u: {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+}): TokenUsage => ({
+  input: u.input_tokens ?? 0,
+  output: u.output_tokens ?? 0,
+  cacheRead: u.cache_read_input_tokens ?? 0,
+  cacheCreation: u.cache_creation_input_tokens ?? 0,
+});
 
 /**
  * The planner brain call: turns a plain-English objective into a
@@ -146,4 +171,317 @@ export async function decompose(args: DecomposeArgs): Promise<DecomposeResult> {
     throw new Error("The planner finished without calling submit_plan.");
   }
   return { plan: captured, durationMs: Date.now() - startedAt };
+}
+
+/* ------------------------------------------------------------------ *
+ * The judge: did the work actually satisfy the intent?
+ * ------------------------------------------------------------------ */
+
+/**
+ * The judge brain call — the piece that makes "Praktor declares victory,
+ * not the worker" true. Runs only after mechanical acceptance has already
+ * passed (engine.ts enforces this ordering): acceptance answers "does the
+ * repo do what the checks say," this answers "is that actually what the
+ * task asked for" — a question no shell command's exit code can ever
+ * express. A worker that hits every acceptance check while quietly
+ * ignoring half the intent, or editing files nothing in the intent
+ * mentions, passes the first gate and fails this one.
+ *
+ * Deliberately a fresh, independent session with no memory of the attempt
+ * that produced the diff — grading your own homework from inside the same
+ * context that wrote it is not independent review. Read-only for the same
+ * reason `decompose` is: judging is not implementing, so there is nothing
+ * to negotiate about Edit/Write/Bash access.
+ */
+
+const REVIEW_TIMEOUT_MS = 5 * 60_000;
+
+export interface ReviewArgs {
+  taskTitle: string;
+  intent: string;
+  /** The attempt's worktree — reviewed in place so the judge can Read/Grep
+   *  the real files the diff touches, not just the patch text. */
+  worktreePath: string;
+  baseSha: string;
+  verify: VerifyOutcome;
+  model: string;
+}
+
+export interface ReviewResult {
+  review: ReviewOutputT;
+  durationMs: number;
+  usage: TokenUsage;
+  costUsdEstimate: number;
+}
+
+function renderVerifySummary(verify: VerifyOutcome): string {
+  return verify.checks
+    .map((c) => `- ${c.label} (${c.command}): ${c.passed ? "passed" : `FAILED, exit ${c.exitCode}`}`)
+    .join("\n");
+}
+
+const REVIEWER_INSTRUCTIONS =
+  "You are reviewing one finished task, not implementing anything. Its mechanical acceptance " +
+  "checks already passed — your job is the question those checks cannot ask: does this diff " +
+  "actually do what the intent below asked for, in a way a reasonable person would call done?\n" +
+  "Specifically check for:\n" +
+  "- Requirements stated or clearly implied by the intent that the diff does not address.\n" +
+  "- Files changed that have nothing to do with the intent — acceptance checks only prove the " +
+  "target behavior exists, not that nothing unrelated was touched.\n" +
+  "- A change that is locally plausible but globally wrong for this repo (contradicts an " +
+  "existing pattern, duplicates something that already exists, or solves a narrower or " +
+  "different problem than what was asked).\n" +
+  "You may Read and Grep the actual files, not just the diff text, before deciding.\n" +
+  "Use 'accept' only when you would be comfortable this task never gets looked at again. Use " +
+  "'revise' when it is close but something concrete is missing or wrong. Use 'reject' when it " +
+  "does not address the intent at all. List every concrete reason — a respawned worker only " +
+  "sees what you write here, not your reasoning.\n" +
+  "Call submit_review exactly once, when you have decided. Do not edit, write, or run anything.";
+
+export function buildReviewerPrompt(args: ReviewArgs, briefing: string, patch: string): string {
+  return [
+    briefing,
+    `Task: ${args.taskTitle}`,
+    `Intent: ${args.intent}`,
+    `Acceptance checks (already passed):\n${renderVerifySummary(args.verify)}`,
+    `Diff since the base commit:\n\`\`\`diff\n${patch || "(no diff — nothing changed on disk)"}\n\`\`\``,
+    REVIEWER_INSTRUCTIONS,
+  ]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n");
+}
+
+export async function review(args: ReviewArgs): Promise<ReviewResult> {
+  const startedAt = Date.now();
+  let captured: ReviewOutputT | undefined;
+  let usage = ZERO_USAGE;
+  let costUsdEstimate = 0;
+
+  const submitReviewTool = tool(
+    "submit_review",
+    "Submit your verdict on this finished task. Call this exactly once, when you have decided.",
+    ReviewOutput.shape,
+    async (input) => {
+      captured = ReviewOutput.parse(input);
+      return { content: [{ type: "text" as const, text: "Review received." }] };
+    },
+  );
+  const reviewerServer = createSdkMcpServer({
+    name: "reviewer",
+    version: "0.1.0",
+    tools: [submitReviewTool],
+  });
+
+  const briefing = renderBriefing(buildRepoBriefing(args.worktreePath));
+  const patch = diffPatch(args.worktreePath, args.baseSha);
+  const abortController = new AbortController();
+  const options: Options = {
+    cwd: args.worktreePath,
+    model: args.model,
+    effort: "medium",
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    maxTurns: 15,
+    abortController,
+    disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash"],
+    mcpServers: { reviewer: reviewerServer },
+  };
+
+  const q = query({ prompt: buildReviewerPrompt(args, briefing, patch), options });
+
+  let stopping = false;
+  const timeout = setTimeout(() => {
+    stopping = true;
+    abortController.abort();
+  }, REVIEW_TIMEOUT_MS);
+
+  try {
+    for await (const msg of q) {
+      if (msg.type === "assistant") {
+        usage = toTokenUsage(msg.message.usage);
+      }
+      if (msg.type === "result") {
+        costUsdEstimate = msg.total_cost_usd;
+        break;
+      }
+      if (!stopping && captured) {
+        stopping = true;
+        await q.interrupt().catch(() => {
+          /* best effort — we keep draining the generator either way */
+        });
+      }
+    }
+  } catch (err) {
+    if (!stopping) throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!captured) {
+    throw new Error("The reviewer finished without calling submit_review.");
+  }
+  return { review: captured, durationMs: Date.now() - startedAt, usage, costUsdEstimate };
+}
+
+/* ------------------------------------------------------------------ *
+ * The diagnoser: why did this attempt fail, and what should happen next?
+ * ------------------------------------------------------------------ */
+
+/**
+ * Classifies a failed attempt (a stall, a failed acceptance check, or a
+ * judge `revise`/`reject`) so the supervisor can react to *why* it failed
+ * instead of always running the identical checkpoint-and-respawn loop.
+ * A flaky failure deserves a plain retry; a task whose acceptance criteria
+ * are internally contradictory deserves a person's attention immediately,
+ * not three more respawns that fail the same way for the same reason.
+ *
+ * Same shape as `review`: fresh session, read-only, fails open — the
+ * caller falls back to today's unconditional "respawn" behavior on any
+ * error here, so a classifier outage is never a new way to get stuck.
+ */
+
+const DIAGNOSE_TIMEOUT_MS = 3 * 60_000;
+
+export interface DiagnoseArgs {
+  taskTitle: string;
+  intent: string;
+  worktreePath: string;
+  model: string;
+  ruledOut: string[];
+  stallSignal?: StallSignal;
+  verify?: VerifyOutcome;
+  review?: ReviewOutputT;
+  /** Fallback context when none of the three above narrow it down (e.g. the
+   *  run ended in a plain SDK error) — the worker's own final result subtype. */
+  exitReason?: string;
+}
+
+export interface DiagnoseResult {
+  diagnosis: DiagnoseOutputT;
+  durationMs: number;
+  usage: TokenUsage;
+  costUsdEstimate: number;
+}
+
+function renderFailureDetail(args: DiagnoseArgs): string {
+  if (args.review && args.review.verdict !== "accept") {
+    return (
+      `Praktor's independent reviewer sent this back with verdict "${args.review.verdict}":\n` +
+      `${args.review.reasons.join("\n") || "(no reasons given)"}\n` +
+      (args.review.missing.length > 0 ? `Missing: ${args.review.missing.join("; ")}` : "")
+    );
+  }
+  if (args.verify) {
+    const failed = args.verify.checks.filter((c) => !c.passed);
+    return `Acceptance checks failed:\n${failed
+      .map((c) => `- ${c.label} (${c.command}): exit ${c.exitCode ?? "n/a"}\n  ${(c.runError ?? c.stderr ?? c.stdout ?? "").slice(0, 500)}`)
+      .join("\n")}`;
+  }
+  if (args.stallSignal) {
+    return `The worker stalled: ${args.stallSignal.signal} — ${args.stallSignal.detail}`;
+  }
+  return `The run ended without completing (${args.exitReason ?? "unknown reason"}), and no more specific detail was captured.`;
+}
+
+const DIAGNOSER_INSTRUCTIONS =
+  "A task attempt just failed. Classify why, using only the evidence given — you may Read/Grep " +
+  "the repo for context but the failure already happened in a worktree you are not looking at.\n" +
+  "class: 'flaky' — looks like bad luck (e.g. a timing-dependent test, a transient network " +
+  "error in a check) rather than anything wrong with the approach.\n" +
+  "class: 'bug' — the approach was reasonable but has a real, fixable defect.\n" +
+  "class: 'spec' — the task's own intent or acceptance checks are unclear, contradictory, or " +
+  "ask for something that conflicts with the repo as it actually is. More attempts at THIS " +
+  "task cannot fix a broken spec.\n" +
+  "class: 'env' — the failure is about the environment/tooling (missing dependency, wrong " +
+  "path, platform mismatch), not the code change itself.\n" +
+  "nextAction: 'retry' for flaky (no hint needed, just try again). 'retry_with_hint' for a bug " +
+  "you can name a concrete different approach for. 'respawn' when you're not confident enough " +
+  "to give a specific hint but another attempt is still worth it. 'escalate' for 'spec' or a " +
+  "'bug'/'env' problem too deep for another attempt to plausibly fix on its own — a person " +
+  "should look. 'abandon' only when this task cannot succeed at all as written.\n" +
+  "Call submit_diagnosis exactly once.";
+
+export function buildDiagnoserPrompt(args: DiagnoseArgs, briefing: string): string {
+  return [
+    briefing,
+    `Task: ${args.taskTitle}`,
+    `Intent: ${args.intent}`,
+    renderFailureDetail(args),
+    args.ruledOut.length > 0 ? `Already ruled out in earlier attempts:\n${args.ruledOut.map((r) => `- ${r}`).join("\n")}` : "",
+    DIAGNOSER_INSTRUCTIONS,
+  ]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n");
+}
+
+export async function diagnose(args: DiagnoseArgs): Promise<DiagnoseResult> {
+  const startedAt = Date.now();
+  let captured: DiagnoseOutputT | undefined;
+  let usage = ZERO_USAGE;
+  let costUsdEstimate = 0;
+
+  const submitDiagnosisTool = tool(
+    "submit_diagnosis",
+    "Submit your classification of why this attempt failed and what should happen next. Call " +
+      "this exactly once.",
+    DiagnoseOutput.shape,
+    async (input) => {
+      captured = DiagnoseOutput.parse(input);
+      return { content: [{ type: "text" as const, text: "Diagnosis received." }] };
+    },
+  );
+  const diagnoserServer = createSdkMcpServer({
+    name: "diagnoser",
+    version: "0.1.0",
+    tools: [submitDiagnosisTool],
+  });
+
+  const briefing = renderBriefing(buildRepoBriefing(args.worktreePath));
+  const abortController = new AbortController();
+  const options: Options = {
+    cwd: args.worktreePath,
+    model: args.model,
+    effort: "medium",
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    maxTurns: 10,
+    abortController,
+    disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash"],
+    mcpServers: { diagnoser: diagnoserServer },
+  };
+
+  const q = query({ prompt: buildDiagnoserPrompt(args, briefing), options });
+
+  let stopping = false;
+  const timeout = setTimeout(() => {
+    stopping = true;
+    abortController.abort();
+  }, DIAGNOSE_TIMEOUT_MS);
+
+  try {
+    for await (const msg of q) {
+      if (msg.type === "assistant") {
+        usage = toTokenUsage(msg.message.usage);
+      }
+      if (msg.type === "result") {
+        costUsdEstimate = msg.total_cost_usd;
+        break;
+      }
+      if (!stopping && captured) {
+        stopping = true;
+        await q.interrupt().catch(() => {
+          /* best effort — we keep draining the generator either way */
+        });
+      }
+    }
+  } catch (err) {
+    if (!stopping) throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!captured) {
+    throw new Error("The diagnoser finished without calling submit_diagnosis.");
+  }
+  return { diagnosis: captured, durationMs: Date.now() - startedAt, usage, costUsdEstimate };
 }

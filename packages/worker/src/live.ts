@@ -43,6 +43,11 @@ export function formatLiveLine(payload: EventPayload): string | undefined {
     case "stall.detected":
       return `  [stalled] ${payload.signal}${payload.detail ? `: ${payload.detail}` : ""}`;
 
+    case "review.result":
+      return payload.verdict === "accept"
+        ? undefined
+        : `  [judge: ${payload.verdict}] ${truncate(payload.reasons.join("; ") || "no reason given", 200)}`;
+
     case "ratelimit.hit":
       return "  [rate limited] pausing this attempt";
 

@@ -1,4 +1,4 @@
-import type { RunExitReason, TokenUsage } from "@exec/core";
+import type { DiagnoseOutput, ReviewOutput, RunExitReason, TokenUsage } from "@exec/core";
 import type { VerifyOutcome } from "@exec/worker";
 
 /**
@@ -19,6 +19,12 @@ export interface AttemptSummary {
   usage: TokenUsage;
   costUsdEstimate: number;
   verify?: VerifyOutcome;
+  /** Set once mechanical acceptance passed — Praktor's own verdict, not the
+   *  worker's, on whether the attempt actually satisfied the intent. */
+  review?: ReviewOutput;
+  /** Set on a failed attempt — the classifier's read on why, and what it
+   *  recommended doing next. */
+  diagnosis?: DiagnoseOutput;
 }
 
 export interface RunReportArgs {
@@ -79,6 +85,15 @@ export function renderReport(args: RunReportArgs): string {
           }
         }
       }
+    }
+    if (a.review) {
+      lines.push(`  [JUDGE] verdict: ${a.review.verdict}`);
+      for (const reason of a.review.reasons) lines.push(`    - ${reason}`);
+      for (const miss of a.review.missing) lines.push(`    missing: ${miss}`);
+    }
+    if (a.diagnosis) {
+      lines.push(`  [DIAGNOSIS] ${a.diagnosis.class}: ${a.diagnosis.cause}`);
+      lines.push(`    next action: ${a.diagnosis.nextAction}`);
     }
   }
 

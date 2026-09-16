@@ -87,6 +87,18 @@ export function describeEvent(payload: EventPayload): EventDisplay {
         text: payload.passed ? "Acceptance passed" : `Acceptance failed: ${payload.failedLabels.join(", ")}`,
       };
 
+    case "review.result":
+      return {
+        kind: payload.verdict === "accept" ? "success" : "warn",
+        text:
+          payload.verdict === "accept"
+            ? "Judge: accepted"
+            : `Judge: ${payload.verdict} — ${payload.reasons.join("; ") || "no reason given"}`,
+      };
+
+    case "diagnose.result":
+      return { kind: "info", text: `Diagnosis: ${payload.class} — ${truncate(payload.cause, 200)} (next: ${payload.nextAction})` };
+
     case "decision.raised":
       return { kind: "warn", text: `Decision needed (${payload.level}): ${payload.title} [${payload.key}]` };
 

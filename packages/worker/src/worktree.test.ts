@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createWorktree, git, removeWorktree } from "./worktree.js";
+import { createWorktree, diffPatch, git, removeWorktree } from "./worktree.js";
 
 let repoPath: string;
 let worktreePath: string;
@@ -47,5 +47,36 @@ describe("createWorktree", () => {
     const raw = readFileSync(join(worktreePath, "reference.txt"));
     expect(raw.includes(0x0d)).toBe(false); // no CR byte anywhere
     expect(raw.toString("utf8")).toBe("line one\nline two\n");
+  });
+});
+
+describe("diffPatch", () => {
+  it("returns real hunk content, not just a file/line summary", () => {
+    const handle = createWorktree({ repoPath, worktreePath, branch: "exec/test-attempt-1", baseRef: "HEAD" });
+    writeFileSync(join(worktreePath, "reference.txt"), "line one\nline two changed\n");
+    git(worktreePath, ["add", "-A"]);
+    git(worktreePath, ["commit", "-q", "-m", "edit"]);
+
+    const patch = diffPatch(worktreePath, handle.baseSha);
+
+    expect(patch).toContain("-line two");
+    expect(patch).toContain("+line two changed");
+  });
+
+  it("returns an empty string when nothing changed since the base commit", () => {
+    const handle = createWorktree({ repoPath, worktreePath, branch: "exec/test-attempt-1", baseRef: "HEAD" });
+    expect(diffPatch(worktreePath, handle.baseSha)).toBe("");
+  });
+
+  it("truncates an oversized diff with a clear marker instead of returning it whole", () => {
+    const handle = createWorktree({ repoPath, worktreePath, branch: "exec/test-attempt-1", baseRef: "HEAD" });
+    writeFileSync(join(worktreePath, "big.txt"), "x".repeat(60_000));
+    git(worktreePath, ["add", "-A"]);
+    git(worktreePath, ["commit", "-q", "-m", "big file"]);
+
+    const patch = diffPatch(worktreePath, handle.baseSha);
+
+    expect(patch.length).toBeLessThan(60_000);
+    expect(patch).toContain("[diff truncated");
   });
 });

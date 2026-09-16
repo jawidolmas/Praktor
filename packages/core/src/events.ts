@@ -134,6 +134,26 @@ const VerifyResult = z.object({
   failedLabels: z.array(z.string()).default([]),
 });
 
+/** The independent judge's verdict on a task whose mechanical acceptance
+ *  checks already passed — see `ReviewOutput` in contracts.ts. Only fires
+ *  once acceptance is green; a `revise`/`reject` here is what stops a worker
+ *  from being the one to declare its own task "done." */
+const ReviewResult = z.object({
+  type: z.literal("review.result"),
+  verdict: z.enum(["accept", "revise", "reject"]),
+  reasons: z.array(z.string()).default([]),
+  missing: z.array(z.string()).default([]),
+});
+
+/** The failure-classifier's read on why an attempt didn't make it, and what
+ *  the supervisor should do next — see `DiagnoseOutput` in contracts.ts. */
+const DiagnoseResult = z.object({
+  type: z.literal("diagnose.result"),
+  cause: z.string(),
+  class: z.enum(["flaky", "bug", "spec", "env"]),
+  nextAction: z.enum(["retry", "retry_with_hint", "respawn", "escalate", "abandon"]),
+});
+
 /* -- escalation and limits -- */
 
 const DecisionRaised = z.object({
@@ -214,6 +234,8 @@ export const EventPayloadSchema = z.discriminatedUnion("type", [
   PolicyEvaluated,
   VerifyCheck,
   VerifyResult,
+  ReviewResult,
+  DiagnoseResult,
   DecisionRaised,
   DecisionAnswered,
   RateLimitHit,

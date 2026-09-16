@@ -42,4 +42,43 @@ describe("buildCheckpoint", () => {
     const checkpoint = buildCheckpoint(BASE);
     expect(checkpoint.currentProblem).toBe("The previous attempt did not reach a verified done state.");
   });
+
+  it("records a judge's 'revise' verdict, including what it says is still missing", () => {
+    const checkpoint = buildCheckpoint({
+      ...BASE,
+      review: {
+        verdict: "revise",
+        reasons: ["Only handles positive numbers"],
+        missing: ["Negative number handling"],
+      },
+    });
+
+    expect(checkpoint.currentProblem).toContain("sent back for revision");
+    expect(checkpoint.currentProblem).toContain("Only handles positive numbers");
+    expect(checkpoint.currentProblem).toContain("Negative number handling");
+    expect(checkpoint.doNotRepeat).toContain(
+      'Whatever led to a review verdict of "revise": Only handles positive numbers',
+    );
+    expect(checkpoint.attemptsTried).toHaveLength(1);
+  });
+
+  it("records a judge's 'reject' verdict distinctly from 'revise'", () => {
+    const checkpoint = buildCheckpoint({
+      ...BASE,
+      review: { verdict: "reject", reasons: ["Does not touch math.js at all"], missing: [] },
+    });
+
+    expect(checkpoint.currentProblem).toContain("rejected");
+    expect(checkpoint.currentProblem).toContain("Does not touch math.js at all");
+  });
+
+  it("leaves the checkpoint untouched when the judge accepted", () => {
+    const checkpoint = buildCheckpoint({
+      ...BASE,
+      review: { verdict: "accept", reasons: [], missing: [] },
+    });
+
+    expect(checkpoint.currentProblem).toBe("The previous attempt did not reach a verified done state.");
+    expect(checkpoint.attemptsTried).toEqual([]);
+  });
 });

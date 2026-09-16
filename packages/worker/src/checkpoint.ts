@@ -1,4 +1,4 @@
-import type { Checkpoint } from "@exec/core";
+import type { Checkpoint, ReviewOutput } from "@exec/core";
 import type { StallSignal } from "./telemetry.js";
 import type { VerifyOutcome } from "./verify.js";
 
@@ -21,6 +21,11 @@ export interface BuildCheckpointArgs {
   ruledOut: string[];
   stallSignal?: StallSignal;
   verify?: VerifyOutcome;
+  /** Set when the judge (`review` in brain.ts) sent a mechanically-passing
+   *  attempt back — mutually exclusive with `stallSignal` in practice, since
+   *  the judge only ever runs once a run completed and its acceptance checks
+   *  passed. */
+  review?: ReviewOutput;
   resultText?: string;
 }
 
@@ -59,6 +64,18 @@ export function buildCheckpoint(args: BuildCheckpointArgs): Checkpoint {
         outcome: `exit ${check.exitCode ?? "n/a"}${detail ? `: ${detail}` : ""}`,
       });
     }
+  }
+
+  if (args.review && args.review.verdict !== "accept") {
+    const reasons = args.review.reasons.join("; ") || "no reason given";
+    const missing = args.review.missing.length > 0 ? ` Still missing: ${args.review.missing.join("; ")}.` : "";
+    const verb = args.review.verdict === "reject" ? "rejected" : "sent back for revision";
+    currentProblem = `Praktor's review ${verb} this attempt: ${reasons}.${missing}`;
+    attemptsTried.push({
+      approach: args.resultText?.slice(0, 300) ?? args.intent,
+      outcome: `review verdict: ${args.review.verdict} — ${reasons}`,
+    });
+    doNotRepeat.push(`Whatever led to a review verdict of "${args.review.verdict}": ${reasons}`);
   }
 
   return {

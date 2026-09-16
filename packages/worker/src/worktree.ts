@@ -203,6 +203,30 @@ export function churn(worktreePath: string): ChurnStat {
   return { linesChanged, filesChanged };
 }
 
+const DIFF_PATCH_MAX_CHARS = 40_000;
+
+/**
+ * The actual diff content since the worktree's base commit — real hunks, not
+ * just `churn()`'s file/line-count summary. This is what the judge (`review`
+ * in brain.ts) reads to compare the change against the task's intent; nothing
+ * else in this codebase needs diff *content* rather than a diff *size*, which
+ * is why this lives next to `churn()` but stays separate from it.
+ *
+ * Truncated defensively at `DIFF_PATCH_MAX_CHARS` — the same instinct as
+ * `runAcceptance`'s `maxBuffer`, just applied to something that's about to be
+ * spent as prompt tokens instead of piped to a shell.
+ */
+export function diffPatch(worktreePath: string, baseSha: string): string {
+  let patch: string;
+  try {
+    patch = git(worktreePath, ["diff", baseSha, "HEAD"]);
+  } catch {
+    return "";
+  }
+  if (patch.length <= DIFF_PATCH_MAX_CHARS) return patch;
+  return `${patch.slice(0, DIFF_PATCH_MAX_CHARS)}\n\n[diff truncated at ${DIFF_PATCH_MAX_CHARS} characters]`;
+}
+
 /** Commit everything in the worktree. Returns false when there was nothing to commit. */
 export function commitAll(worktreePath: string, message: string): boolean {
   git(worktreePath, ["add", "-A"]);

@@ -1,7 +1,14 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
-import { newId, newSessionId, type EffortLevel, type TokenUsage } from "@exec/core";
+import {
+  newId,
+  newSessionId,
+  type DiagnoseOutput,
+  type EffortLevel,
+  type ReviewOutput,
+  type TokenUsage,
+} from "@exec/core";
 import {
   abandonAllTasks,
   activePolicies,
@@ -29,10 +36,12 @@ import {
   churn,
   commitAll,
   createWorktree,
+  diagnose,
   foldIntoIntegrationBranch,
   removeWorktree,
   renderCheckpointNote,
   resolveTaskBaseRef,
+  review,
   runAcceptance,
   runWorker,
   type RunWorkerResult,
@@ -74,6 +83,55 @@ export function clampParkDelay(retryDelayMs: number | undefined): number {
   const DEFAULT_MS = 60_000;
   if (retryDelayMs === undefined || !Number.isFinite(retryDelayMs)) return DEFAULT_MS;
   return Math.min(MAX_MS, Math.max(MIN_MS, retryDelayMs));
+}
+
+export interface MechanicalCheckpoint {
+  note: string;
+  ruledOut: string[];
+}
+
+export interface RecoverySeed {
+  ruledOutAdditions: string[];
+  checkpointNote: string | undefined;
+}
+
+/**
+ * How a diagnosed failure changes what the *next* attempt is told, given the
+ * mechanical checkpoint that was already built the same way as before this
+ * existed. `nextAction` is `undefined` whenever `diagnose()` itself failed or
+ * was skipped — treated identically to `"respawn"`, today's only behavior,
+ * so a classifier outage never changes what already works (see brain.ts's
+ * own fail-open doc comment on `diagnose`).
+ *
+ * `"retry"` deliberately carries nothing forward — flagging a flaky failure
+ * as a ruled-out approach would tell a respawned worker to avoid a way of
+ * working that was never actually wrong. `"escalate"`/`"abandon"` are not
+ * handled here: the caller checks `shouldEscalateImmediately` first and
+ * never reaches this function for those two.
+ */
+export function planRecoverySeed(
+  nextAction: DiagnoseOutput["nextAction"] | undefined,
+  mechanical: MechanicalCheckpoint,
+  diagnosis?: { hint?: string | undefined; ruledOut: string[] },
+): RecoverySeed {
+  if (nextAction === "retry") {
+    return { ruledOutAdditions: [], checkpointNote: undefined };
+  }
+  if (nextAction === "retry_with_hint") {
+    return {
+      ruledOutAdditions: diagnosis?.ruledOut ?? [],
+      checkpointNote: diagnosis?.hint ?? mechanical.note,
+    };
+  }
+  return { ruledOutAdditions: mechanical.ruledOut, checkpointNote: mechanical.note };
+}
+
+/** Whether a diagnosis says this task should go straight to the same L3
+ *  escalation permanent-attempt-exhaustion already uses, instead of spending
+ *  the rest of its attempt budget on a class of failure another respawn is
+ *  unlikely to fix (a broken spec) or shouldn't (an unwinnable task). */
+export function shouldEscalateImmediately(nextAction: DiagnoseOutput["nextAction"] | undefined): boolean {
+  return nextAction === "escalate" || nextAction === "abandon";
 }
 
 const DECISION_POLL_MS = 3000;
@@ -426,43 +484,99 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
       });
     }
 
-    attempts.push({
-      attempt,
-      exitReason: result.exitReason,
-      turns: result.turns,
-      usage: result.usage,
-      costUsdEstimate: result.costUsdEstimate,
-      ...(verify !== undefined ? { verify } : {}),
-    });
-
+    // Mechanical acceptance passing is necessary but no longer sufficient —
+    // an independent judge gets the final say on whether the attempt is
+    // actually done, so a worker's own acceptance-check-passing diff is
+    // never automatically "victory." See brain.ts's `review`.
+    let reviewOutcome: ReviewOutput | undefined;
     if (verify?.passed) {
-      committed = commitAll(worktree.path, `${task.title}\n\n${result.resultText ?? ""}`.trim());
-      finalStatus = "done";
-      setTaskStatus(db, task.id, "done");
+      const attemptCommitted = commitAll(worktree.path, `${task.title}\n\n${result.resultText ?? ""}`.trim());
 
-      // Fold this task's branch into the objective's integration branch so a
-      // task that depends on this one actually sees these files in its own
-      // worktree, instead of starting from the same base every sibling task
-      // does. Best-effort: a fold conflict doesn't touch this task's own
-      // already-committed, already-accepted result — it only means a future
-      // dependent task won't see this one's changes automatically and may
-      // need to ask, same as before this existed.
-      const fold = foldIntoIntegrationBranch({
-        repoPath: objective.repoPath,
-        objectiveId: objective.id,
-        objectiveBaseRef: objective.baseRef,
-        taskBranch: worktree.branch,
-        worktreesDir: worktreesDir(),
-      });
-      appendEvent(db, {
-        objectiveId: objective.id,
-        taskId: task.id,
-        runId,
-        payload: { type: "note", message: fold.ok ? fold.message : `Integration: ${fold.message}` },
-      });
-      break;
+      try {
+        const reviewResult = await review({
+          taskTitle: task.title,
+          intent: task.intent,
+          worktreePath: worktree.path,
+          baseSha: worktree.baseSha,
+          verify,
+          model: task.model,
+        });
+        reviewOutcome = reviewResult.review;
+        appendEvent(db, {
+          objectiveId: objective.id,
+          taskId: task.id,
+          runId,
+          payload: { type: "brain.call", site: "review", ok: true, durationMs: reviewResult.durationMs },
+        });
+        appendEvent(db, {
+          objectiveId: objective.id,
+          taskId: task.id,
+          runId,
+          payload: {
+            type: "review.result",
+            verdict: reviewOutcome.verdict,
+            reasons: reviewOutcome.reasons,
+            missing: reviewOutcome.missing,
+          },
+        });
+      } catch (err) {
+        // Fail open, matching the one existing precedent for a brain-call
+        // failure (plan.ts's decompose fallback): a transient API hiccup
+        // during an unattended run must never be a new way for an objective
+        // to wedge itself, so this reduces to today's mechanical-only
+        // behavior rather than blocking.
+        console.error(`[${objective.id.slice(0, 8)}] review failed, treating this attempt as accepted:`, err);
+        appendEvent(db, {
+          objectiveId: objective.id,
+          taskId: task.id,
+          runId,
+          payload: { type: "brain.call", site: "review", ok: false, durationMs: 0 },
+        });
+        reviewOutcome = { verdict: "accept", reasons: [], missing: [] };
+      }
+
+      if (reviewOutcome.verdict === "accept") {
+        committed = attemptCommitted;
+        finalStatus = "done";
+        setTaskStatus(db, task.id, "done");
+
+        // Fold this task's branch into the objective's integration branch so a
+        // task that depends on this one actually sees these files in its own
+        // worktree, instead of starting from the same base every sibling task
+        // does. Best-effort: a fold conflict doesn't touch this task's own
+        // already-committed, already-accepted result — it only means a future
+        // dependent task won't see this one's changes automatically and may
+        // need to ask, same as before this existed.
+        const fold = foldIntoIntegrationBranch({
+          repoPath: objective.repoPath,
+          objectiveId: objective.id,
+          objectiveBaseRef: objective.baseRef,
+          taskBranch: worktree.branch,
+          worktreesDir: worktreesDir(),
+        });
+        appendEvent(db, {
+          objectiveId: objective.id,
+          taskId: task.id,
+          runId,
+          payload: { type: "note", message: fold.ok ? fold.message : `Integration: ${fold.message}` },
+        });
+
+        attempts.push({
+          attempt,
+          exitReason: result.exitReason,
+          turns: result.turns,
+          usage: result.usage,
+          costUsdEstimate: result.costUsdEstimate,
+          verify,
+          review: reviewOutcome,
+        });
+        break;
+      }
     }
 
+    // Reached on a stall, a failed acceptance check, or a mechanically-passing
+    // attempt the judge sent back — every case where this attempt is not the
+    // task's final answer.
     const changed = churn(worktree.path);
     const checkpoint = buildCheckpoint({
       taskTitle: task.title,
@@ -471,6 +585,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
       ruledOut,
       ...(result.stallSignal !== undefined ? { stallSignal: result.stallSignal } : {}),
       ...(verify !== undefined ? { verify } : {}),
+      ...(reviewOutcome !== undefined ? { review: reviewOutcome } : {}),
       ...(result.resultText !== undefined ? { resultText: result.resultText } : {}),
     });
     const artifactId = writeArtifact(db, {
@@ -486,11 +601,80 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
       runId,
       payload: { type: "checkpoint.written", artifactId, ruledOutCount: checkpoint.doNotRepeat.length },
     });
-    addRuledOut(db, task.id, checkpoint.doNotRepeat);
-    ruledOut = [...ruledOut, ...checkpoint.doNotRepeat];
-    checkpointNote = renderCheckpointNote(checkpoint);
+
+    // Classify why this attempt failed so the loop can react differently
+    // than the identical mechanical respawn every failure used to get — see
+    // brain.ts's `diagnose` and `planRecoverySeed` above.
+    let diagnosis: DiagnoseOutput | undefined;
+    try {
+      const diagnoseResult = await diagnose({
+        taskTitle: task.title,
+        intent: task.intent,
+        worktreePath: worktree.path,
+        model: task.model,
+        ruledOut,
+        exitReason: result.exitReason,
+        ...(result.stallSignal !== undefined ? { stallSignal: result.stallSignal } : {}),
+        ...(verify !== undefined ? { verify } : {}),
+        ...(reviewOutcome !== undefined ? { review: reviewOutcome } : {}),
+      });
+      diagnosis = diagnoseResult.diagnosis;
+      appendEvent(db, {
+        objectiveId: objective.id,
+        taskId: task.id,
+        runId,
+        payload: { type: "brain.call", site: "diagnose", ok: true, durationMs: diagnoseResult.durationMs },
+      });
+      appendEvent(db, {
+        objectiveId: objective.id,
+        taskId: task.id,
+        runId,
+        payload: {
+          type: "diagnose.result",
+          cause: diagnosis.cause,
+          class: diagnosis.class,
+          nextAction: diagnosis.nextAction,
+        },
+      });
+    } catch (err) {
+      // Same fail-open rule as review(): fall back to today's unconditional
+      // mechanical respawn (planRecoverySeed treats a missing diagnosis
+      // exactly like "respawn") rather than blocking the task.
+      console.error(`[${objective.id.slice(0, 8)}] diagnose failed, falling back to a mechanical respawn:`, err);
+      appendEvent(db, {
+        objectiveId: objective.id,
+        taskId: task.id,
+        runId,
+        payload: { type: "brain.call", site: "diagnose", ok: false, durationMs: 0 },
+      });
+    }
+
+    const seed = planRecoverySeed(
+      diagnosis?.nextAction,
+      { note: renderCheckpointNote(checkpoint), ruledOut: checkpoint.doNotRepeat },
+      diagnosis ? { hint: diagnosis.hint, ruledOut: diagnosis.ruledOut } : undefined,
+    );
+    addRuledOut(db, task.id, seed.ruledOutAdditions);
+    ruledOut = [...ruledOut, ...seed.ruledOutAdditions];
+    checkpointNote = seed.checkpointNote;
 
     removeWorktree(worktree);
+
+    attempts.push({
+      attempt,
+      exitReason: result.exitReason,
+      turns: result.turns,
+      usage: result.usage,
+      costUsdEstimate: result.costUsdEstimate,
+      ...(verify !== undefined ? { verify } : {}),
+      ...(reviewOutcome !== undefined ? { review: reviewOutcome } : {}),
+      ...(diagnosis !== undefined ? { diagnosis } : {}),
+    });
+
+    if (shouldEscalateImmediately(diagnosis?.nextAction)) {
+      handlePermanentFailure(db, task, objective);
+      break;
+    }
 
     if (attempt === task.maxAttempts) {
       handlePermanentFailure(db, task, objective);
