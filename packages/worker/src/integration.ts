@@ -93,13 +93,21 @@ export function foldIntoIntegrationBranch(args: {
 
   mkdirSync(args.worktreesDir, { recursive: true });
   try {
+    // Same -c core.autocrlf=false override createWorktree itself uses, and
+    // for the same reason (b13ae20) — confirmed live to matter here too:
+    // without it, this checkout follows the host's global autocrlf while the
+    // merge two lines down was forced to core.autocrlf=false, and the
+    // mismatch between the two makes git see an unmodified file as locally
+    // "changed" (a real Windows CRLF-vs-LF checkout, not a false alarm from
+    // the override alone) — turning an ordinary, non-conflicting fold into a
+    // refused merge every time.
     if (existed) {
       // No -B here, deliberately: unlike an attempt worktree (always reset
       // to a clean starting point), this branch's whole purpose is to keep
       // what earlier folds already added.
-      git(args.repoPath, ["worktree", "add", scratchPath, branch]);
+      git(args.repoPath, ["-c", "core.autocrlf=false", "worktree", "add", scratchPath, branch]);
     } else {
-      git(args.repoPath, ["worktree", "add", "-b", branch, scratchPath, args.objectiveBaseRef]);
+      git(args.repoPath, ["-c", "core.autocrlf=false", "worktree", "add", "-b", branch, scratchPath, args.objectiveBaseRef]);
     }
   } catch (err) {
     return { ok: false, message: `Could not check out the integration branch: ${err instanceof Error ? err.message : String(err)}` };

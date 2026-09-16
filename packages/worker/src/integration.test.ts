@@ -108,6 +108,32 @@ describe("foldIntoIntegrationBranch", () => {
     expect(existsSync(join(worktreesDir, integrationScratchDirName(objectiveId)))).toBe(false);
   });
 
+  it("folds cleanly when the task branch edits a file that already existed in the base commit", () => {
+    // The bug this guards against only showed up on a file that was already
+    // committed at objectiveBaseRef (README.md, from the repo's own init
+    // commit in beforeEach) — a task branch that only ever adds brand-new
+    // files never exercises the scratch worktree's checkout of a
+    // pre-existing file, which is exactly what a real "edit the README"
+    // task does. Confirmed live: on a host with core.autocrlf=true (the
+    // common Windows default), the scratch worktree checked README.md out
+    // with CRLF while the merge ran forced to core.autocrlf=false, and git
+    // saw the mismatch as a real local modification and refused to merge —
+    // "Your local changes to the following files would be overwritten by
+    // merge" — even though nothing had actually touched the file by hand.
+    const editBranch = "exec/t-edit-readme-attempt-1";
+    const path = join(worktreesDir, "edit-readme");
+    git(repoPath, ["-c", "core.autocrlf=false", "worktree", "add", "-b", editBranch, path, "main"]);
+    writeFileSync(join(path, "README.md"), "hello\n\nedited by a task\n");
+    git(path, ["add", "-A"]);
+    git(path, ["commit", "-q", "-m", "edit README"]);
+    git(repoPath, ["worktree", "remove", path, "--force"]);
+
+    const result = foldIntoIntegrationBranch({ repoPath, objectiveId, objectiveBaseRef: "main", taskBranch: editBranch, worktreesDir });
+
+    expect(result.ok).toBe(true);
+    expect(git(repoPath, ["show", `${integrationBranchName(objectiveId)}:README.md`])).toBe("hello\n\nedited by a task");
+  });
+
   it("reports a conflict without corrupting the branch, and still cleans up the scratch worktree", () => {
     createTaskBranch("exec/t1-attempt-1", "SAME.md", "task 1's version\n");
     createTaskBranch("exec/t2-attempt-1", "SAME.md", "task 2's conflicting version\n");
