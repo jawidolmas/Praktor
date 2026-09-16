@@ -715,9 +715,13 @@ section { padding: 84px 0; }
   padding-top: 24px;
 }
 
-.glitch-text {
-  position: relative;
-  display: inline-block;
+/* Structural only — deliberately no typography here, so this can be added to
+   any heading (h1, h2, h3...) without overriding its own font-size, color,
+   alignment, etc. Just the positioning the ::before/::after glitch layers
+   need. */
+.glitch-text { position: relative; }
+
+.statusfeed-col h3 {
   margin: 0 0 16px;
   font-size: 13px;
   letter-spacing: 0.14em;
@@ -733,14 +737,19 @@ section { padding: 84px 0; }
   width: 100%;
   pointer-events: none;
 }
+/* mix-blend-mode: difference, not screen — screen only adds light, so it
+   washes out to invisible on a light or same-colored background (this now
+   runs on light sections and the blue graph canvas too, not just the dark
+   Updates terminal it started on). difference always produces a visible
+   result against any backdrop. */
 .glitch-text.glitching::before {
-  color: var(--accent-text);
-  mix-blend-mode: screen;
+  color: #00e5ff;
+  mix-blend-mode: difference;
   animation: glitch-shift-1 0.32s steps(6) 1;
 }
 .glitch-text.glitching::after {
   color: #ff2d6a;
-  mix-blend-mode: screen;
+  mix-blend-mode: difference;
   animation: glitch-shift-2 0.32s steps(6) 1;
 }
 @keyframes glitch-shift-1 {
