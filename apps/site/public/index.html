@@ -95,30 +95,25 @@
           <span class="proof-fig">FIG 0.1</span>
           <div class="proof-art">
             <svg viewBox="0 0 200 170" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-              <path class="proof-ground" d="M76,158 L124,158" />
-              <path class="proof-branch proof-branch-0" d="M100,155 C99,130 101,110 100,88" pathLength="100" />
-              <path class="proof-branch proof-branch-1" d="M100,122 C85,112 65,95 53,64" pathLength="100" />
-              <path class="proof-branch proof-branch-2" d="M100,107 C118,98 135,85 147,70" pathLength="100" />
-              <path class="proof-branch proof-branch-3" d="M100,90 C99,75 100,58 100,40" pathLength="100" />
+              <path class="proof-branch proof-branch-0" d="M100,32 L100,62" pathLength="100" />
+              <path class="proof-branch proof-branch-1" d="M100,62 C90,80 72,98 59.5,114.9" pathLength="100" />
+              <path class="proof-branch proof-branch-2" d="M100,62 C100,85 100,108 100,129" pathLength="100" />
+              <path class="proof-branch proof-branch-3" d="M100,62 C112,80 130,96 140.3,111" pathLength="100" />
 
-              <g class="proof-leaf proof-leaf-1" id="leaf1" style="transform-origin:52px 47px">
-                <path d="M52,47 C60,51 60,65 52,69 C44,65 44,51 52,47 Z" />
-                <path d="M52,49 L52,67" />
-              </g>
-              <g class="proof-leaf proof-leaf-2" id="leaf2" style="transform-origin:148px 55px">
-                <path d="M148,55 C156,59 156,73 148,77 C140,73 140,59 148,55 Z" />
-                <path d="M148,57 L148,75" />
-              </g>
-              <g class="proof-leaf proof-leaf-3" id="leaf3" style="transform-origin:100px 24px">
-                <path d="M100,24 C108,28 108,42 100,46 C92,42 92,28 100,24 Z" />
-                <path d="M100,26 L100,44" />
+              <g class="proof-root">
+                <circle cx="100" cy="24" r="8" />
+                <circle cx="100" cy="24" r="2.4" fill="currentColor" stroke="none" />
               </g>
 
-              <circle class="proof-node" cx="52" cy="58" r="15" fill="transparent" data-target="leaf1"
+              <circle class="proof-leaf proof-leaf-1" id="leaf1" cx="54" cy="122" r="9" />
+              <circle class="proof-leaf proof-leaf-2" id="leaf2" cx="100" cy="138" r="9" />
+              <circle class="proof-leaf proof-leaf-3" id="leaf3" cx="146" cy="118" r="9" />
+
+              <circle class="proof-node" cx="54" cy="122" r="15" fill="transparent" data-target="leaf1"
                 data-callout-title="Fixing an auth bug" data-callout-body="Session refresh patched and verified in its own worktree." />
-              <circle class="proof-node" cx="148" cy="66" r="15" fill="transparent" data-target="leaf2"
+              <circle class="proof-node" cx="100" cy="138" r="15" fill="transparent" data-target="leaf2"
                 data-callout-title="Adding CONTRIBUTING.md" data-callout-body="Docs task run, checked, and merged — no babysitting." />
-              <circle class="proof-node" cx="100" cy="35" r="15" fill="transparent" data-target="leaf3"
+              <circle class="proof-node" cx="146" cy="118" r="15" fill="transparent" data-target="leaf3"
                 data-callout-title="Fixing a flaky test" data-callout-body="checkout.spec.ts retried in isolation until it passed clean." />
             </svg>
           </div>
