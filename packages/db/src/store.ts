@@ -1,11 +1,14 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import {
   PolicySchema,
+  isEvent,
   type Budget,
   type DecomposeOutput,
   type EffortLevel,
   type EventLevel,
   type EventPayload,
+  type Memory,
+  type MemoryTier,
   type Policy,
   decisionKey,
   newId,
@@ -238,6 +241,118 @@ export function listObjectives(db: Db): ObjectiveSummary[] {
       lastEventAt: lastEventByObjective.get(o.id) ?? null,
     };
   });
+}
+
+export interface RecoveredTask {
+  taskTitle: string;
+  objectiveTitle: string;
+  /** The diagnoser's own read on what went wrong — see `DiagnoseOutput` in
+   *  contracts.ts. */
+  cause: string;
+  class: string;
+}
+
+/**
+ * Tasks that hit a real failure (a stall, a failed acceptance check, or a
+ * judge send-back — anything that made it to `diagnose()`) since `since`,
+ * and are now "done" regardless — the concrete cases behind "Praktor
+ * detected the worker was failing and recovered," not a theoretical
+ * capability. One entry per task even if it was diagnosed more than once
+ * (a respawned attempt that stalls again still only recovered once).
+ */
+export function recoveredTasksSince(db: Db, since: number): RecoveredTask[] {
+  const rows = db
+    .select()
+    .from(events)
+    .where(and(eq(events.type, "diagnose.result"), gt(events.ts, since)))
+    .orderBy(asc(events.ts))
+    .all();
+
+  const seen = new Set<string>();
+  const result: RecoveredTask[] = [];
+  for (const row of rows) {
+    if (!row.taskId || seen.has(row.taskId) || !isEvent(row.payload, "diagnose.result")) continue;
+    const task = db.select().from(tasks).where(eq(tasks.id, row.taskId)).get();
+    if (!task || task.status !== "done") continue;
+    const objective = db.select().from(objectives).where(eq(objectives.id, task.objectiveId)).get();
+    seen.add(row.taskId);
+    result.push({
+      taskTitle: task.title,
+      objectiveTitle: objective?.title ?? "",
+      cause: row.payload.cause,
+      class: row.payload.class,
+    });
+  }
+  return result;
+}
+
+/** Objectives whose work is done but a person hasn't actually merged it
+ *  anywhere yet — see `mergedAt`'s own doc comment for why "done" alone
+ *  never means that. The one genuinely actionable "what's next" a digest
+ *  can honestly report without inventing a plan. */
+export function readyToMergeObjectives(db: Db): ObjectiveRow[] {
+  return db
+    .select()
+    .from(objectives)
+    .where(and(eq(objectives.status, "done"), isNull(objectives.mergedAt)))
+    .orderBy(desc(objectives.updatedAt))
+    .all();
+}
+
+export interface HealthApprox {
+  /** Share of mechanical acceptance checks that passed. `undefined` when
+   *  there's no data in the window — never shown as a false 0% or 100%. */
+  buildPct: number | undefined;
+  /** Share of the independent judge's verdicts that were "accept" — the
+   *  closest real analogue to a test suite's pass rate this system has. */
+  testsPct: number | undefined;
+  /** Share of policy evaluations that were a plain "allow", with no denial,
+   *  ask, or warning raised. */
+  securityPct: number | undefined;
+}
+
+function pct(matched: number, total: number): number | undefined {
+  return total === 0 ? undefined : Math.round((matched / total) * 100);
+}
+
+/**
+ * Best-effort proxies for "is this healthy" from signals the system already
+ * has — deliberately not the polished single build/test/security score a
+ * real CI dashboard would show, since nothing here actually runs a security
+ * audit. Each is `undefined`, not a misleading 0% or 100%, when there's
+ * simply no data for it in the window.
+ */
+export function approximateHealthSince(db: Db, since: number): HealthApprox {
+  const verifyRows = db
+    .select()
+    .from(events)
+    .where(and(eq(events.type, "verify.result"), gt(events.ts, since)))
+    .all();
+  const reviewRows = db
+    .select()
+    .from(events)
+    .where(and(eq(events.type, "review.result"), gt(events.ts, since)))
+    .all();
+  const policyRows = db
+    .select()
+    .from(events)
+    .where(and(eq(events.type, "policy.evaluated"), gt(events.ts, since)))
+    .all();
+
+  return {
+    buildPct: pct(
+      verifyRows.filter((r) => isEvent(r.payload, "verify.result") && r.payload.passed).length,
+      verifyRows.length,
+    ),
+    testsPct: pct(
+      reviewRows.filter((r) => isEvent(r.payload, "review.result") && r.payload.verdict === "accept").length,
+      reviewRows.length,
+    ),
+    securityPct: pct(
+      policyRows.filter((r) => isEvent(r.payload, "policy.evaluated") && r.payload.action === "allow").length,
+      policyRows.length,
+    ),
+  };
 }
 
 /** An objective never leaves one of these once it reaches one. */
@@ -804,6 +919,89 @@ export function setSetting(db: Db, key: string, value: string): void {
     .values({ key, value })
     .onConflictDoUpdate({ target: settings.key, set: { value } })
     .run();
+}
+
+/* ------------------------------------------------------------------ *
+ * Memory — the standing engineering profile (permanent tier), plus
+ * project/session-scoped notes. See `MemoryTier` in @exec/core: "Objective
+ * id for project tier, run id for session tier, empty for permanent."
+ * ------------------------------------------------------------------ */
+
+export function listMemories(db: Db, tier: MemoryTier, scopeId = ""): Memory[] {
+  const rows = db
+    .select()
+    .from(memories)
+    .where(and(eq(memories.tier, tier), eq(memories.scopeId, scopeId)))
+    .orderBy(asc(memories.createdAt))
+    .all();
+  // `tier` is a plain text column (same convention as `objectives.status`
+  // and friends — enum-shaped columns in this schema aren't narrowed with
+  // `.$type<>()`), so it comes back as `string`; safe to widen back to
+  // `MemoryTier` here since every row was written by `upsertMemory` below,
+  // which only ever accepts a real `MemoryTier`.
+  return rows.map((r) => ({ ...r, tier: r.tier as MemoryTier }));
+}
+
+export interface UpsertMemoryArgs {
+  tier: MemoryTier;
+  scopeId?: string;
+  title: string;
+  content: string;
+  source?: string;
+}
+
+/** Replaces, rather than duplicates, an existing entry with the same
+ *  `(tier, scopeId, title)` — so re-running `exec-agent profile set
+ *  "Architecture" ...` updates that one line instead of accumulating a
+ *  growing pile of stale ones. Transaction-based rather than a unique index
+ *  + `onConflictDoUpdate`: no such index exists on this table today, and a
+ *  read-then-write inside one transaction is race-safe without adding one. */
+export function upsertMemory(db: Db, args: UpsertMemoryArgs): Memory {
+  const scopeId = args.scopeId ?? "";
+  return db.transaction((tx) => {
+    const existing = tx
+      .select()
+      .from(memories)
+      .where(and(eq(memories.tier, args.tier), eq(memories.scopeId, scopeId), eq(memories.title, args.title)))
+      .get();
+
+    if (existing) {
+      const source = args.source ?? existing.source;
+      tx.update(memories).set({ content: args.content, source }).where(eq(memories.id, existing.id)).run();
+      return {
+        id: existing.id,
+        tier: args.tier,
+        scopeId,
+        title: args.title,
+        content: args.content,
+        source,
+        createdAt: existing.createdAt,
+      };
+    }
+
+    const row: Memory = {
+      id: newId(),
+      tier: args.tier,
+      scopeId,
+      title: args.title,
+      content: args.content,
+      source: args.source ?? "",
+      createdAt: Date.now(),
+    };
+    tx.insert(memories).values(row).run();
+    return row;
+  });
+}
+
+export function deleteMemory(db: Db, tier: MemoryTier, scopeId: string, title: string): boolean {
+  const existing = db
+    .select()
+    .from(memories)
+    .where(and(eq(memories.tier, tier), eq(memories.scopeId, scopeId), eq(memories.title, title)))
+    .get();
+  if (!existing) return false;
+  db.delete(memories).where(eq(memories.id, existing.id)).run();
+  return true;
 }
 
 /* ------------------------------------------------------------------ *

@@ -10,6 +10,7 @@ import {
   type TokenUsage,
 } from "@exec/core";
 import { buildRepoBriefing, renderBriefing } from "./briefing.js";
+import { renderEngineeringProfile, type ProfileEntry } from "./profile.js";
 import { diffPatch } from "./worktree.js";
 import type { StallSignal } from "./telemetry.js";
 import type { VerifyOutcome } from "./verify.js";
@@ -75,6 +76,13 @@ export interface DecomposeArgs {
    *  yet at planning time. */
   repoPath: string;
   model: string;
+  /** The standing engineering profile (permanent-tier memory), so the task
+   *  graph itself gets planned around real preferences — e.g. a task that
+   *  would otherwise casually introduce a new dependency or a new database
+   *  is planned around "avoid unnecessary dependencies" from the start,
+   *  rather than only being caught later at review time. Empty when nothing
+   *  has been set. */
+  profile?: ProfileEntry[];
 }
 
 export interface DecomposeResult {
@@ -104,7 +112,13 @@ const PLANNER_INSTRUCTIONS =
   "anything — you are only planning, not implementing.";
 
 export function buildPlannerPrompt(args: DecomposeArgs, briefing: string): string {
-  return [briefing, `Objective: ${args.title}`, args.brief, PLANNER_INSTRUCTIONS]
+  return [
+    briefing,
+    renderEngineeringProfile(args.profile ?? []),
+    `Objective: ${args.title}`,
+    args.brief,
+    PLANNER_INSTRUCTIONS,
+  ]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
 }
@@ -205,6 +219,12 @@ export interface ReviewArgs {
   baseSha: string;
   verify: VerifyOutcome;
   model: string;
+  /** The standing engineering profile — see `DecomposeArgs.profile`. Here,
+   *  it's what lets the judge reject a diff that technically satisfies the
+   *  intent but violates a standing preference (an unnecessary dependency,
+   *  a needless abstraction) — the acceptance checks structurally cannot
+   *  express that, and the worker has no reason to know it unprompted. */
+  profile?: ProfileEntry[];
 }
 
 export interface ReviewResult {
@@ -231,6 +251,9 @@ const REVIEWER_INSTRUCTIONS =
   "- A change that is locally plausible but globally wrong for this repo (contradicts an " +
   "existing pattern, duplicates something that already exists, or solves a narrower or " +
   "different problem than what was asked).\n" +
+  "- A violation of the standing engineering profile below, if one is given, even when the " +
+  "diff otherwise satisfies the intent — e.g. an unnecessary dependency or abstraction the " +
+  "profile says to avoid is a real reason to send this back, not a stylistic nitpick.\n" +
   "You may Read and Grep the actual files, not just the diff text, before deciding.\n" +
   "Use 'accept' only when you would be comfortable this task never gets looked at again. Use " +
   "'revise' when it is close but something concrete is missing or wrong. Use 'reject' when it " +
@@ -241,6 +264,7 @@ const REVIEWER_INSTRUCTIONS =
 export function buildReviewerPrompt(args: ReviewArgs, briefing: string, patch: string): string {
   return [
     briefing,
+    renderEngineeringProfile(args.profile ?? []),
     `Task: ${args.taskTitle}`,
     `Intent: ${args.intent}`,
     `Acceptance checks (already passed):\n${renderVerifySummary(args.verify)}`,
@@ -354,6 +378,10 @@ export interface DiagnoseArgs {
   /** Fallback context when none of the three above narrow it down (e.g. the
    *  run ended in a plain SDK error) — the worker's own final result subtype. */
   exitReason?: string;
+  /** The standing engineering profile — see `DecomposeArgs.profile`. Lets a
+   *  hint (`retry_with_hint`) point a respawned worker toward the preferred
+   *  approach, not just away from the one that just failed. */
+  profile?: ProfileEntry[];
 }
 
 export interface DiagnoseResult {
@@ -404,6 +432,7 @@ const DIAGNOSER_INSTRUCTIONS =
 export function buildDiagnoserPrompt(args: DiagnoseArgs, briefing: string): string {
   return [
     briefing,
+    renderEngineeringProfile(args.profile ?? []),
     `Task: ${args.taskTitle}`,
     `Intent: ${args.intent}`,
     renderFailureDetail(args),

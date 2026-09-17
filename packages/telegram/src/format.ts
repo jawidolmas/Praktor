@@ -76,6 +76,35 @@ export function formatAnsweredSuffix(optionId: string, answeredBy: string): stri
   return `\n\n✅ Answered: ${optionId} (by ${answeredBy})`;
 }
 
+/** One task the mechanical recovery loop or the classifier actually had to
+ *  do something about, that reached "done" anyway — see `recoveredTasksSince`
+ *  in @exec/db. This is what turns "Claude fucked up" into "Praktor detected
+ *  the worker was failing and recovered": a concrete, named instance, not a
+ *  claimed capability. */
+export interface RecoveredItem {
+  taskTitle: string;
+  cause: string;
+  class: string;
+}
+
+/** An open decision, with the recommendation resolved to its actual option
+ *  label (e.g. "PostgreSQL + RLS") rather than a bare id — what makes this
+ *  worth reading over just "1 objective blocked." */
+export interface DecisionSummary {
+  key: string;
+  title: string;
+  recommendationLabel: string;
+}
+
+/** See `approximateHealthSince` in @exec/db for exactly what these are (and
+ *  are not) — best-effort proxies from real events, not a CI/security tool's
+ *  actual score. `undefined` means no data in the window, not 0%. */
+export interface HealthApprox {
+  buildPct: number | undefined;
+  testsPct: number | undefined;
+  securityPct: number | undefined;
+}
+
 /** What the once-a-day digest reports: not just "here's what's pending" but
  *  a reason to actually open the message even on a quiet day — the whole
  *  point of a standing morning check-in rather than only escalating on a
@@ -85,22 +114,84 @@ export interface DigestSnapshot {
   active: string[];
   blocked: string[];
   parked: string[];
+  recovered: RecoveredItem[];
+  decisionsNeeded: DecisionSummary[];
+  readyToMerge: string[];
+  health: HealthApprox;
 }
 
+function healthBar(pct: number | undefined): string {
+  if (pct === undefined) return "n/a";
+  const filled = Math.round(pct / 10);
+  return `${"█".repeat(filled)}${"░".repeat(10 - filled)} ${pct}%`;
+}
+
+/** Above this, a section stops being a quick morning read and starts being
+ *  a wall of text — found live: an unbounded "ready to merge" list pulled in
+ *  every never-merged objective going back days and swallowed the message.
+ *  Each section still reports its true count via the "+N more" line, so
+ *  nothing is silently hidden, just not dumped in full into a chat message. */
+const MAX_ITEMS_PER_SECTION = 5;
+
 export function formatDigestMessage(snapshot: DigestSnapshot): string {
-  const lines: string[] = ["<b>Morning digest</b>", ""];
+  const lines: string[] = ["<b>Praktor Morning Brief</b>", ""];
   const section = (label: string, items: string[]): void => {
     lines.push(`<b>${label}</b>`);
     if (items.length === 0) {
       lines.push("   (none)");
     } else {
-      for (const item of items) lines.push(`   • ${escapeHtml(item)}`);
+      for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) lines.push(`   • ${escapeHtml(item)}`);
+      if (items.length > MAX_ITEMS_PER_SECTION) {
+        lines.push(`   … +${items.length - MAX_ITEMS_PER_SECTION} more (see the dashboard)`);
+      }
     }
     lines.push("");
   };
+
   section("Finished since last digest", snapshot.finishedSinceLast);
+
+  lines.push("<b>Recovered automatically</b>");
+  if (snapshot.recovered.length === 0) {
+    lines.push("   (none)");
+  } else {
+    for (const r of snapshot.recovered.slice(0, MAX_ITEMS_PER_SECTION)) {
+      lines.push(`   🔧 ${escapeHtml(r.taskTitle)} — ${escapeHtml(r.class)}: ${escapeHtml(r.cause)}`);
+    }
+    if (snapshot.recovered.length > MAX_ITEMS_PER_SECTION) {
+      lines.push(`   … +${snapshot.recovered.length - MAX_ITEMS_PER_SECTION} more (see the dashboard)`);
+    }
+  }
+  lines.push("");
+
+  lines.push("<b>Decision needed</b>");
+  if (snapshot.decisionsNeeded.length === 0) {
+    lines.push("   (none)");
+  } else {
+    for (const d of snapshot.decisionsNeeded.slice(0, MAX_ITEMS_PER_SECTION)) {
+      lines.push(`   ⚠ ${escapeHtml(d.title)} [${escapeHtml(d.key)}]`);
+      lines.push(`      My recommendation: ${escapeHtml(d.recommendationLabel)}`);
+    }
+    if (snapshot.decisionsNeeded.length > MAX_ITEMS_PER_SECTION) {
+      lines.push(`   … +${snapshot.decisionsNeeded.length - MAX_ITEMS_PER_SECTION} more (see the dashboard)`);
+    }
+  }
+  lines.push("");
+
   section("Still running", snapshot.active);
-  section("Waiting on you", snapshot.blocked);
   section("Paused (rate limit)", snapshot.parked);
+  section("Ready to review & merge", snapshot.readyToMerge);
+
+  lines.push("<b>Approximate health</b> (best effort — not a real build/test/security run)");
+  lines.push(`   Build     ${healthBar(snapshot.health.buildPct)}`);
+  lines.push(`   Tests     ${healthBar(snapshot.health.testsPct)}`);
+  lines.push(`   Security  ${healthBar(snapshot.health.securityPct)}`);
+  lines.push("");
+
+  lines.push(
+    snapshot.decisionsNeeded.length === 0
+      ? "No urgent action required."
+      : `${snapshot.decisionsNeeded.length} decision(s) need you.`,
+  );
+
   return lines.join("\n").trimEnd();
 }

@@ -19,8 +19,13 @@ import {
   markDecisionNotified,
   markObjectiveMerged,
   nextDecisionKey,
+  approximateHealthSince,
+  deleteMemory,
+  listMemories,
   readEvents,
   readyTasks,
+  readyToMergeObjectives,
+  recoveredTasksSince,
   reconcileObjective,
   releaseApproveLock,
   schedulableObjectives,
@@ -29,6 +34,7 @@ import {
   setTaskStatus,
   tryAcquireApproveLock,
   unnotifiedDecisions,
+  upsertMemory,
   writeArtifact,
   type TaskResultContent,
 } from "./store.js";
@@ -468,6 +474,90 @@ describe("listObjectives", () => {
     const olderSummary = summaries.find((s) => s.id === older)!;
     expect(olderSummary.taskCount).toBe(0);
     expect(olderSummary.lastEventAt).toBeNull();
+  });
+});
+
+describe("readyToMergeObjectives", () => {
+  it("includes a done objective only until it's actually merged", () => {
+    setObjectiveStatus(db, objectiveId, "done");
+    expect(readyToMergeObjectives(db).map((o) => o.id)).toEqual([objectiveId]);
+
+    markObjectiveMerged(db, objectiveId);
+
+    expect(readyToMergeObjectives(db).map((o) => o.id)).toEqual([]);
+  });
+});
+
+describe("recoveredTasksSince", () => {
+  it("only counts a task once even if it was diagnosed more than once before finishing", () => {
+    const t1 = addTask("T-001");
+    setTaskStatus(db, t1, "done");
+    const since = Date.now() - 1000;
+
+    appendEvent(db, {
+      objectiveId, taskId: t1,
+      payload: { type: "diagnose.result", cause: "first stall", class: "flaky", nextAction: "retry" },
+    });
+    appendEvent(db, {
+      objectiveId, taskId: t1,
+      payload: { type: "diagnose.result", cause: "second stall", class: "flaky", nextAction: "retry" },
+    });
+
+    const recovered = recoveredTasksSince(db, since);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ taskTitle: expect.any(String), cause: "first stall", class: "flaky" });
+  });
+});
+
+describe("approximateHealthSince", () => {
+  it("computes each proxy independently and leaves one undefined when it has no events at all", () => {
+    const since = Date.now() - 1000;
+    appendEvent(db, { objectiveId, payload: { type: "verify.result", passed: true, failedLabels: [] } });
+    appendEvent(db, { objectiveId, payload: { type: "verify.result", passed: true, failedLabels: [] } });
+    appendEvent(db, { objectiveId, payload: { type: "verify.result", passed: false, failedLabels: ["x"] } });
+    appendEvent(db, { objectiveId, payload: { type: "review.result", verdict: "accept", reasons: [], missing: [] } });
+    appendEvent(db, { objectiveId, payload: { type: "review.result", verdict: "reject", reasons: [], missing: [] } });
+    // No policy.evaluated events at all this window.
+
+    const health = approximateHealthSince(db, since);
+
+    expect(health.buildPct).toBe(67); // 2/3 passed, rounded
+    expect(health.testsPct).toBe(50); // 1/2 accepted
+    expect(health.securityPct).toBeUndefined(); // no data, not a misleading 0%
+  });
+});
+
+describe("memories (the engineering profile)", () => {
+  it("replaces, rather than duplicates, an existing entry with the same tier/scope/title", () => {
+    upsertMemory(db, { tier: "permanent", title: "Architecture", content: "Prefer simple systems." });
+    upsertMemory(db, { tier: "permanent", title: "Architecture", content: "Prefer boring technology." });
+
+    const entries = listMemories(db, "permanent");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ title: "Architecture", content: "Prefer boring technology." });
+  });
+
+  it("scopes by tier and scopeId independently, defaulting scopeId to empty for permanent", () => {
+    upsertMemory(db, { tier: "permanent", title: "Testing", content: "No \"done\" without verification." });
+    upsertMemory(db, { tier: "session", scopeId: "run-1", title: "Found", content: "A flaky test in CI." });
+
+    expect(listMemories(db, "permanent").map((m) => m.title)).toEqual(["Testing"]);
+    expect(listMemories(db, "session", "run-1").map((m) => m.title)).toEqual(["Found"]);
+    expect(listMemories(db, "session", "run-2")).toEqual([]);
+  });
+
+  it("orders entries oldest first, so a rendered profile reads in the order they were set", () => {
+    upsertMemory(db, { tier: "permanent", title: "First", content: "a" });
+    upsertMemory(db, { tier: "permanent", title: "Second", content: "b" });
+    expect(listMemories(db, "permanent").map((m) => m.title)).toEqual(["First", "Second"]);
+  });
+
+  it("deletes a matching entry and reports whether one existed", () => {
+    upsertMemory(db, { tier: "permanent", title: "Security", content: "Production mutation requires approval." });
+
+    expect(deleteMemory(db, "permanent", "", "Security")).toBe(true);
+    expect(listMemories(db, "permanent")).toEqual([]);
+    expect(deleteMemory(db, "permanent", "", "Security")).toBe(false);
   });
 });
 

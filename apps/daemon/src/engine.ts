@@ -17,6 +17,7 @@ import {
   appendEvent,
   cascadeAbandon,
   decisions,
+  listMemories,
   nextDecisionKey,
   objectives,
   reconcileObjective,
@@ -24,6 +25,7 @@ import {
   setObjectiveStatus,
   setTaskStatus,
   tasks,
+  upsertMemory,
   writeArtifact,
   type Db,
   type ObjectiveRow,
@@ -228,6 +230,11 @@ async function runAttempt(
     baseRef,
   });
 
+  // Fetched once per attempt slot, not per rate-limited retry inside the
+  // loop below — a standing profile doesn't change mid-attempt, and this
+  // avoids a redundant query on every resume.
+  const profile = listMemories(db, "permanent");
+
   let note = initialNote;
 
   for (;;) {
@@ -277,6 +284,7 @@ async function runAttempt(
       prompt: {
         intent: task.intent,
         ruledOut,
+        profile,
         ...(note !== undefined ? { checkpointNote: note } : {}),
       },
       policies: objectivePolicies,
@@ -355,6 +363,18 @@ async function runAttempt(
             runId,
             payload: { type: "finding.recorded", title: input.title, detail: input.detail },
           });
+          // Findings used to be write-only — logged to the event stream and
+          // never read again by anything. Persisting one as session-tier
+          // memory (scoped to this run) means it's at least retrievable
+          // later, even though nothing yet feeds it forward into a *later*
+          // task's prompt (a separate, deliberately deferred piece of work).
+          upsertMemory(db, {
+            tier: "session",
+            scopeId: runId,
+            title: input.title,
+            content: input.detail,
+            source: "worker:record_finding",
+          });
         },
         loadPolicies: () => objectivePolicies,
       },
@@ -428,6 +448,12 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
   setTaskStatus(db, task.id, "running");
   setObjectiveStatus(db, objective.id, "active");
 
+  // Same standing profile `runAttempt` reads for the worker itself — fetched
+  // again here (not threaded through) since it's an independent, cheap,
+  // indexed query and the judge/diagnoser calls below live in this function,
+  // not that one.
+  const profile = listMemories(db, "permanent");
+
   const attempts: AttemptSummary[] = [];
   let ruledOut = [...task.ruledOut];
   let checkpointNote: string | undefined;
@@ -500,6 +526,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
           baseSha: worktree.baseSha,
           verify,
           model: task.model,
+          profile,
         });
         reviewOutcome = reviewResult.review;
         appendEvent(db, {
@@ -614,6 +641,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
         model: task.model,
         ruledOut,
         exitReason: result.exitReason,
+        profile,
         ...(result.stallSignal !== undefined ? { stallSignal: result.stallSignal } : {}),
         ...(verify !== undefined ? { verify } : {}),
         ...(reviewOutcome !== undefined ? { review: reviewOutcome } : {}),

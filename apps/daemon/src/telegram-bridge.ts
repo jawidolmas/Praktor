@@ -1,8 +1,12 @@
 import {
   answerDecision,
+  approximateHealthSince,
   getSetting,
   markDecisionNotified,
   objectives,
+  openDecisions,
+  readyToMergeObjectives,
+  recoveredTasksSince,
   setSetting,
   unnotifiedDecisions,
   type Db,
@@ -160,6 +164,11 @@ export function buildDigestSnapshot(db: Db, since: number): DigestSnapshot {
   const byStatus = (status: string): string[] =>
     all.filter((o) => o.status === status).map((o) => o.title);
 
+  const decisionsNeeded = openDecisions(db).map((d) => {
+    const recommended = d.options.find((o) => o.id === d.recommendation);
+    return { key: d.key, title: d.title, recommendationLabel: recommended?.label ?? d.recommendation };
+  });
+
   return {
     finishedSinceLast: all
       .filter((o) => (o.status === "done" || o.status === "failed") && o.updatedAt > since)
@@ -167,6 +176,14 @@ export function buildDigestSnapshot(db: Db, since: number): DigestSnapshot {
     active: byStatus("active"),
     blocked: byStatus("blocked"),
     parked: byStatus("parked"),
+    recovered: recoveredTasksSince(db, since).map((r) => ({
+      taskTitle: r.taskTitle,
+      cause: r.cause,
+      class: r.class,
+    })),
+    decisionsNeeded,
+    readyToMerge: readyToMergeObjectives(db).map((o) => o.title),
+    health: approximateHealthSince(db, since),
   };
 }
 

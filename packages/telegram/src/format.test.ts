@@ -48,25 +48,75 @@ describe("decisionKeyboard", () => {
   });
 });
 
+const EMPTY_DIGEST = {
+  finishedSinceLast: [],
+  active: [],
+  blocked: [],
+  parked: [],
+  recovered: [],
+  decisionsNeeded: [],
+  readyToMerge: [],
+  health: { buildPct: undefined, testsPct: undefined, securityPct: undefined },
+};
+
 describe("formatDigestMessage", () => {
   it("lists every section, marking an empty one rather than omitting it", () => {
     const msg = formatDigestMessage({
+      ...EMPTY_DIGEST,
       finishedSinceLast: ["Ship the notifications feature (done)"],
       active: ["Add a Telegram bridge"],
-      blocked: [],
-      parked: [],
     });
     expect(msg).toContain("Finished since last digest");
     expect(msg).toContain("Ship the notifications feature (done)");
     expect(msg).toContain("Add a Telegram bridge");
-    expect(msg).toContain("Waiting on you");
     expect(msg).toContain("(none)");
   });
 
-  it("still produces a message when everything is empty", () => {
-    const msg = formatDigestMessage({ finishedSinceLast: [], active: [], blocked: [], parked: [] });
-    expect(msg).toContain("Morning digest");
-    expect((msg.match(/\(none\)/g) ?? []).length).toBe(4);
+  it("still produces a message when everything is empty, saying no urgent action is needed", () => {
+    const msg = formatDigestMessage(EMPTY_DIGEST);
+    expect(msg).toContain("Praktor Morning Brief");
+    expect(msg).toContain("No urgent action required.");
+    expect(msg).toContain("Build     n/a");
+  });
+
+  it("surfaces a recovered task's cause and class", () => {
+    const msg = formatDigestMessage({
+      ...EMPTY_DIGEST,
+      recovered: [{ taskTitle: "Add isEven helper", cause: "turn budget too tight", class: "flaky" }],
+    });
+    expect(msg).toContain("Add isEven helper");
+    expect(msg).toContain("flaky");
+    expect(msg).toContain("turn budget too tight");
+  });
+
+  it("shows a decision's resolved recommendation label and flags it as urgent, not \"no action required\"", () => {
+    const msg = formatDigestMessage({
+      ...EMPTY_DIGEST,
+      decisionsNeeded: [{ key: "DEC-001", title: "Database architecture", recommendationLabel: "PostgreSQL + RLS" }],
+    });
+    expect(msg).toContain("Database architecture");
+    expect(msg).toContain("My recommendation: PostgreSQL + RLS");
+    expect(msg).toContain("1 decision(s) need you.");
+    expect(msg).not.toContain("No urgent action required.");
+  });
+
+  it("caps a long section instead of dumping everything into one message", () => {
+    const msg = formatDigestMessage({
+      ...EMPTY_DIGEST,
+      readyToMerge: Array.from({ length: 26 }, (_, i) => `Objective ${i + 1}`),
+    });
+    expect((msg.match(/^   • /gm) ?? []).length).toBe(5);
+    expect(msg).toContain("… +21 more (see the dashboard)");
+  });
+
+  it("renders a health percentage as a filled/empty bar, and leaves undefined as n/a", () => {
+    const msg = formatDigestMessage({
+      ...EMPTY_DIGEST,
+      health: { buildPct: 100, testsPct: 90, securityPct: undefined },
+    });
+    expect(msg).toContain("Build     ██████████ 100%");
+    expect(msg).toContain("Tests     █████████░ 90%");
+    expect(msg).toContain("Security  n/a");
   });
 });
 

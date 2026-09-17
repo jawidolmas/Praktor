@@ -13,6 +13,7 @@ import {
   listObjectives,
   listOpenDecisions,
   listPolicies,
+  listProfile,
 } from "./api.js";
 
 const PUBLIC_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..", "public");
@@ -190,6 +191,10 @@ export function createDashboardServer(db: Db) {
 
       if (path === "/api/policies") {
         return sendJson(res, 200, listPolicies(db));
+      }
+
+      if (path === "/api/profile") {
+        return sendJson(res, 200, listProfile(db));
       }
 
       if (path.startsWith("/api/")) {

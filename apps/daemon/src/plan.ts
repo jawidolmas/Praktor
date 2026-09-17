@@ -1,5 +1,5 @@
 import type { EffortLevel } from "@exec/core";
-import { appendEvent, createTasksFromPlan, type Db, type ObjectiveRow } from "@exec/db";
+import { appendEvent, createTasksFromPlan, listMemories, type Db, type ObjectiveRow } from "@exec/db";
 import { decompose, weakChangedCheck } from "@exec/worker";
 
 /**
@@ -22,6 +22,7 @@ export async function planObjective(db: Db, objective: ObjectiveRow): Promise<vo
       brief: objective.brief,
       repoPath: objective.repoPath,
       model: objective.model,
+      profile: listMemories(db, "permanent"),
     });
     appendEvent(db, {
       objectiveId: objective.id,

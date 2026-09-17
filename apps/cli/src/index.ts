@@ -12,6 +12,7 @@ import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.j
 import { printEvents } from "./events.js";
 import { inferCheck } from "./infer.js";
 import { printObjectiveList } from "./list.js";
+import { printProfileList, setProfileEntry, unsetProfileEntry } from "./profile.js";
 import { resolveRepoFromText } from "./resolve-repo.js";
 import { submitAndWatch, tailObjective } from "./run.js";
 
@@ -21,6 +22,9 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
   exec-agent do "<what to do, in plain English>" [options]
   exec-agent run --repo <path> --intent "<what to do>" --check "<label>=<command>" [options]
   exec-agent list [--status <status>]
+  exec-agent profile list
+  exec-agent profile set --title "<category>" --value "<preference>"
+  exec-agent profile unset "<category>"
   exec-agent watch <objective-id>
   exec-agent events <objective-id>
   exec-agent decide <decision-key> <option-id> [--by "<name>"]
@@ -90,6 +94,14 @@ Re-running it with a different --mode switches which one is registered.
 status, task progress, and when it last did anything — so you can find one
 again without already knowing its id. Filter to one status with --status
 (e.g. --status blocked to see what's waiting on you).
+
+"profile" manages the standing engineering profile — preferences like
+"prefer explicit over clever" or "avoid unnecessary dependencies" that every
+planner, worker, judge, and diagnoser call reads on every objective, not just
+this one. "list" shows everything set; "set" adds or replaces one category by
+title; "unset" removes one.
+
+  exec-agent profile set --title "Dependencies" --value "Avoid adding a dependency for anything trivial."
 
 "decide" answers an open decision from any terminal, not necessarily the one
 watching the objective — useful once you've walked away. The dashboard can
@@ -266,6 +278,26 @@ async function runDecide(argv: string[]): Promise<void> {
   console.log(`${key} answered "${answer}" by ${answeredBy}.`);
 }
 
+async function runProfile(argv: string[]): Promise<void> {
+  const sub = argv[0];
+  if (sub === "list") {
+    printProfileList();
+    return;
+  }
+  if (sub === "set") {
+    const { flags } = parseArgs(argv.slice(1));
+    setProfileEntry(flags.get("title")?.[0], flags.get("value")?.[0]);
+    return;
+  }
+  if (sub === "unset") {
+    const { positional } = parseArgs(argv.slice(1));
+    unsetProfileEntry(positional[0]);
+    return;
+  }
+  console.error("usage: exec-agent profile list|set|unset");
+  process.exitCode = 1;
+}
+
 async function runAbandon(argv: string[]): Promise<void> {
   const objectiveId = argv[0];
   if (!objectiveId) {
@@ -373,6 +405,11 @@ async function main(): Promise<void> {
   if (command === "list") {
     const { flags } = parseArgs(rest);
     printObjectiveList(flags.get("status")?.[0]);
+    return;
+  }
+
+  if (command === "profile") {
+    await runProfile(rest);
     return;
   }
 

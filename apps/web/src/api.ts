@@ -7,6 +7,7 @@ import {
   autostartStatus,
   decisions,
   findRunningDaemon,
+  listMemories,
   listObjectives,
   markObjectiveMerged,
   objectives,
@@ -174,6 +175,10 @@ export function listOpenDecisions(db: Db) {
 
 export function listPolicies(db: Db) {
   return db.select().from(policies).orderBy(policies.key).all();
+}
+
+export function listProfile(db: Db) {
+  return listMemories(db, "permanent");
 }
 
 /** Answer an open decision from the dashboard. Returns false if it was

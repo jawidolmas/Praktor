@@ -181,18 +181,39 @@ function renderPolicies(rows) {
     </table>`;
 }
 
+function renderProfile(rows) {
+  const el = document.getElementById("profile");
+  if (rows.length === 0) {
+    el.innerHTML =
+      '<div class="empty">No engineering profile set yet. Add one with ' +
+      '<code>exec-agent profile set --title "Architecture" --value "Prefer simple systems."</code></div>';
+    return;
+  }
+  el.innerHTML = rows
+    .map(
+      (entry) => `
+    <div class="profile-entry">
+      <div class="profile-title">${escapeHtml(entry.title)}</div>
+      <div class="profile-content">${escapeHtml(entry.content)}</div>
+    </div>`,
+    )
+    .join("");
+}
+
 async function refresh() {
-  const [daemon, objectives, decisions, policies] = await Promise.all([
+  const [daemon, objectives, decisions, policies, profile] = await Promise.all([
     fetchJSON("/api/daemon"),
     fetchJSON("/api/objectives"),
     fetchJSON("/api/decisions"),
     fetchJSON("/api/policies"),
+    fetchJSON("/api/profile"),
   ]);
   renderDaemonStatus(daemon);
   allObjectives = objectives;
   renderObjectives();
   renderDecisions(decisions);
   renderPolicies(policies);
+  renderProfile(profile);
 }
 
 function tickClock() {

@@ -27,4 +27,17 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("approach A");
     expect(prompt).toContain("carried over");
   });
+
+  it("includes the standing engineering profile when one is given", () => {
+    const prompt = buildPrompt(
+      { intent: "Do something", ruledOut: [], profile: [{ title: "Dependencies", content: "Avoid new ones." }] },
+      "",
+    );
+    expect(prompt).toContain("Dependencies: Avoid new ones.");
+  });
+
+  it("omits the profile section entirely when none is given", () => {
+    const prompt = buildPrompt({ intent: "Do something", ruledOut: [] }, "");
+    expect(prompt).not.toContain("Standing engineering profile");
+  });
 });

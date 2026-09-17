@@ -35,6 +35,7 @@ import {
 } from "./telemetry.js";
 import { churn } from "./worktree.js";
 import { buildRepoBriefing, renderBriefing } from "./briefing.js";
+import { renderEngineeringProfile, type ProfileEntry } from "./profile.js";
 
 /**
  * The worker driver: the one place that talks to the Claude Agent SDK.
@@ -49,6 +50,11 @@ export interface WorkerPrompt {
   intent: string;
   ruledOut: string[];
   checkpointNote?: string;
+  /** The standing engineering profile — see `DecomposeArgs.profile` in
+   *  brain.ts for the full rationale. Here, it's what lets the worker avoid
+   *  a preference violation up front instead of only being sent back for
+   *  one by the judge after the fact. */
+  profile?: ProfileEntry[];
 }
 
 export function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
@@ -56,6 +62,11 @@ export function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
 
   if (briefing) {
     parts.push(briefing);
+  }
+
+  const profile = renderEngineeringProfile(prompt.profile ?? []);
+  if (profile) {
+    parts.push(profile);
   }
 
   parts.push(prompt.intent);
