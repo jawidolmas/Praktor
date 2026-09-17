@@ -1,6 +1,6 @@
 {
   "name": "exec-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "An executive agent that supervises Claude Code as a workforce: give it an objective, get back verified work and a report.",

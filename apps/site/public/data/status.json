@@ -1,6 +1,6 @@
 {
-  "version": "0.1.0",
-  "asOf": "2026-09-16",
+  "version": "0.2.0",
+  "asOf": "2026-09-17",
   "features": [
     "Plain-English intake — `exec-agent do \"...\"` resolves the repo and infers a check, or hands off to the planner",
     "Multi-task decomposition — one brain call breaks an objective into a dependency-ordered task graph",
@@ -9,17 +9,33 @@
     "git worktree isolation — a dedicated branch per attempt, nothing runs against your working tree",
     "Policy engine — denies or asks about force-push, prod deploys, destructive SQL, committed secrets",
     "Verification gate — the supervisor runs your real acceptance command; a worker's own \"done\" is advisory",
+    "Independent judge — reviews each attempt's diff against intent before it counts as done, so a worker's own \"done\" is never the final word",
+    "Cause-aware recovery — a failure diagnoser classifies flaky, bug, spec, or environment, and picks retry, retry-with-hint, respawn, or escalate",
     "Checkpoint & respawn — a fresh worker is seeded with what was tried and ruled out, not a longer chat",
     "Rate-limit park-and-resume — retried in place once the limit clears, never burns the attempt budget",
+    "Standing engineering profile — preferences that shape every planning, review, and diagnosis call, plus a daily Telegram digest",
     "Decisions answerable anywhere — terminal, `exec-agent decide`, the dashboard, or Telegram",
     "Human approval gate — a diff per branch and a Merge button; nothing is ever merged automatically",
     "Full event log per objective — `exec-agent events <id>`, replayable, the actual source of truth",
-    "Daemon autostart on login/reboot — with visibility in the dashboard"
+    "Daemon autostart on login/reboot — with visibility in the dashboard",
+    "Dashboard attribution — which model did the work, what the judge and diagnoser decided, and who answered an escalation and through which channel"
   ],
   "log": [
     {
+      "date": "2026-09-17",
+      "entries": [
+        "Released `v0.2.0` — the independent judge, cause-aware recovery, the engineering profile, and the redesigned dashboard, all together",
+        "Redesigned the supervisor dashboard around attribution: a worker → judge → diagnoser pipeline per attempt, a full decision audit log with who-answered-how, cost and token rollups by model, and a health & auto-recovery view",
+        "Added a standing engineering profile and a daily Telegram digest — what ran, what needs a decision, what recovered on its own"
+      ]
+    },
+    {
       "date": "2026-09-16",
       "entries": [
+        "Added an independent judge that reviews each attempt's diff against intent before it counts as done",
+        "Added a cause-aware failure diagnoser (flaky, bug, spec, or environment) that decides what happens next, instead of a blind respawn",
+        "Rebuilt \"how it works\" as a live pipeline graph, and added this changelog feed to the site",
+        "Rebalanced the site's color theme — light by default, the brand blue now a deliberate accent",
         "Fixed a real CRLF conflict in the integration-branch fold, found live",
         "Fixed \"logon\" autostart never actually launching the daemon",
         "Fixed dependent-task blindness, approve races, and native merge confirms"
