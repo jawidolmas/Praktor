@@ -566,8 +566,8 @@ section { padding: 84px 0; }
   --color-accent-800: rgba(255, 255, 255, 0.45);
   --color-accent-900: rgba(6, 108, 231, 0.35); /* a soft brand-blue halo — behind the whole graph, and around cards */
 
-  --font-heading: "Inter", system-ui, sans-serif;
-  --font-body: "Inter", system-ui, sans-serif;
+  --font-heading: var(--mono);
+  --font-body: var(--mono);
   --font-heading-weight: 500;
 
   position: relative;
