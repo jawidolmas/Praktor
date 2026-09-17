@@ -32,6 +32,86 @@ function qs(name) {
   return new URLSearchParams(location.search).get(name);
 }
 
+function formatUsd(n) {
+  if (n === undefined || n === null || Number.isNaN(n)) return "–";
+  if (n === 0) return "$0.00";
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
+function formatTokens(n) {
+  if (n === undefined || n === null) return "–";
+  return `${Math.round(n).toLocaleString()} tok`;
+}
+
+function modelBadge(model) {
+  if (!model) return "";
+  return `<span class="model-badge mono">${escapeHtml(model)}</span>`;
+}
+
+// `answeredBy` is a free-text, convention-based field written by whichever
+// channel actually recorded the answer (telegram-bridge.ts writes
+// "telegram:<user>", the CLI writes "cli-operator" or a --by override,
+// apps/cli/src/decide.ts writes "terminal-operator", the dashboard defaults
+// to "dashboard") — there's no structured column for it, so this is the one
+// place that convention gets turned into something a person can scan at a
+// glance instead of reading a raw string.
+function channelInfo(answeredBy) {
+  const s = (answeredBy || "").trim();
+  if (!s) return { label: "Unanswered", cls: "channel-none" };
+  if (s.startsWith("telegram:")) return { label: "Telegram", detail: s.slice("telegram:".length), cls: "channel-telegram" };
+  if (s === "cli-operator") return { label: "CLI", detail: "", cls: "channel-cli" };
+  if (s.startsWith("cli")) return { label: "CLI", detail: s, cls: "channel-cli" };
+  if (s === "terminal-operator") return { label: "Terminal", detail: "", cls: "channel-terminal" };
+  if (s === "dashboard") return { label: "Dashboard", detail: "", cls: "channel-dashboard" };
+  return { label: "Human", detail: s, cls: "channel-other" };
+}
+
+function channelBadge(answeredBy) {
+  const info = channelInfo(answeredBy);
+  const detail = info.detail ? ` <span class="channel-detail mono">${escapeHtml(info.detail)}</span>` : "";
+  return `<span class="channel-badge ${info.cls}">${escapeHtml(info.label)}</span>${detail}`;
+}
+
+// Persisted per-viewer only (localStorage never reaches the server or other
+// tabs) — purely "remember which tab I was looking at" convenience.
+function initTabs() {
+  const bar = document.getElementById("tabbar");
+  if (!bar) return;
+  bar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    activateTab(btn.dataset.tab);
+    history.replaceState(null, "", `#${btn.dataset.tab}`);
+    try {
+      localStorage.setItem("praktor-tab", btn.dataset.tab);
+    } catch {
+      /* private window / blocked storage — tab still switches, just isn't remembered */
+    }
+  });
+  // The hash wins over the remembered tab — it's what makes a tab
+  // deep-linkable (share a URL straight to "#decisions") rather than only
+  // reachable by clicking, and it's what a headless check can drive without
+  // simulating a click.
+  let initial = location.hash.replace(/^#/, "") || "overview";
+  if (!document.querySelector(`.tab-btn[data-tab="${initial}"]`)) {
+    try {
+      initial = localStorage.getItem("praktor-tab") || "overview";
+    } catch {
+      initial = "overview";
+    }
+  }
+  activateTab(document.querySelector(`.tab-btn[data-tab="${initial}"]`) ? initial : "overview");
+}
+
+function activateTab(tab) {
+  const bar = document.getElementById("tabbar");
+  if (!bar) return;
+  for (const b of bar.querySelectorAll(".tab-btn")) b.classList.toggle("active", b.dataset.tab === tab);
+  for (const page of document.querySelectorAll(".tab-page")) page.hidden = page.dataset.tab !== tab;
+}
+
+initTabs();
+
 async function postJSON(url, body) {
   const res = await fetch(url, {
     method: "POST",
@@ -99,7 +179,12 @@ function renderDecisionCard(d, options) {
       <div class="decision-answer-row">
         <input type="text" id="by-${escapeHtml(d.key)}" class="by-input" placeholder="answered by (optional)" />
       </div>`
-    : `<div class="decision-context">Answered "${escapeHtml(d.answer ?? "")}" by ${escapeHtml(d.answeredBy ?? "")}</div>`;
+    : `
+      <div class="decision-context">
+        Answered "${escapeHtml(d.answer ?? "")}" by ${channelBadge(d.answeredBy)}
+        ${d.answeredAt ? `<span class="muted">${timeAgo(d.answeredAt)}</span>` : ""}
+      </div>
+      ${d.rationale ? `<div class="decision-context muted">${escapeHtml(d.rationale)}</div>` : ""}`;
 
   return `
     <div class="decision-card">

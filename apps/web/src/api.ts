@@ -1,11 +1,15 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
+import { isEvent, type EventPayload } from "@exec/core";
 import {
   acceptedRuns,
   answerDecision,
   appendEvent,
+  approximateHealthSince,
+  artifacts,
   AUTOSTART_MODE_EXPLANATIONS,
   autostartStatus,
   decisions,
+  events,
   findRunningDaemon,
   listMemories,
   listObjectives,
@@ -13,6 +17,7 @@ import {
   objectives,
   policies,
   readEvents,
+  recoveredTasksSince,
   releaseApproveLock,
   runs,
   tasks,
@@ -20,6 +25,8 @@ import {
   type AutostartMode,
   type AutostartStatus,
   type Db,
+  type HealthApprox,
+  type RecoveredTask,
 } from "@exec/db";
 import { attemptBranchName, computeApprovalDiffs, mergeAndPushAll } from "@exec/worker";
 import { describeEvent } from "./format.js";
@@ -128,6 +135,23 @@ export interface DisplayEvent {
   type: string;
   kind: string;
   text: string;
+  /** Which model actually did/reviewed/diagnosed this, when the event carries
+   *  one — run.started, review.result, diagnose.result and brain.call all do.
+   *  Pulled out to its own field (rather than left buried in `text`) so a
+   *  feed can render it as its own badge — the "which agent did the work"
+   *  the plain log line never made a first-class fact. */
+  model: string | null;
+}
+
+/** The handful of event types that carry a `model` field — everything else
+ *  (task lifecycle, policy checks, decisions, etc.) has no agent attached to
+ *  it and `model` is simply omitted for those rows. */
+function extractModel(payload: EventPayload): string | null {
+  if (payload.type === "run.started") return payload.model;
+  if (payload.type === "review.result" || payload.type === "diagnose.result" || payload.type === "brain.call") {
+    return payload.model ?? null;
+  }
+  return null;
 }
 
 export function getObjectiveEvents(db: Db, objectiveId: string, sinceId?: number): DisplayEvent[] {
@@ -144,6 +168,7 @@ export function getObjectiveEvents(db: Db, objectiveId: string, sinceId?: number
       level: row.level,
       taskId: row.taskId,
       runId: row.runId,
+      model: extractModel(row.payload),
       type: row.type,
       kind: display.kind,
       text: display.text,
@@ -170,6 +195,42 @@ export function listOpenDecisions(db: Db) {
     .leftJoin(objectives, eq(decisions.objectiveId, objectives.id))
     .where(eq(decisions.status, "open"))
     .orderBy(desc(decisions.createdAt))
+    .all();
+}
+
+/** Every decision ever raised, newest first — open and resolved alike. This
+ *  is the system-wide audit trail: `listOpenDecisions` only ever shows what's
+ *  still blocking someone, so once a decision is answered it disappears from
+ *  that view entirely. Widened column set (answeredBy/rationale/notifiedAt)
+ *  over `listOpenDecisions` on purpose — this is the one place a viewer can
+ *  ask "who decided this, through what channel, and did Telegram actually
+ *  notify anyone" after the fact. */
+export function listDecisionHistory(db: Db, limit = 300) {
+  return db
+    .select({
+      id: decisions.id,
+      key: decisions.key,
+      objectiveId: decisions.objectiveId,
+      taskId: decisions.taskId,
+      title: decisions.title,
+      context: decisions.context,
+      options: decisions.options,
+      level: decisions.level,
+      risk: decisions.risk,
+      recommendation: decisions.recommendation,
+      status: decisions.status,
+      answer: decisions.answer,
+      answeredBy: decisions.answeredBy,
+      answeredAt: decisions.answeredAt,
+      rationale: decisions.rationale,
+      notifiedAt: decisions.notifiedAt,
+      createdAt: decisions.createdAt,
+      objectiveTitle: objectives.title,
+    })
+    .from(decisions)
+    .leftJoin(objectives, eq(decisions.objectiveId, objectives.id))
+    .orderBy(desc(decisions.createdAt))
+    .limit(limit)
     .all();
 }
 
@@ -307,4 +368,170 @@ export function approveObjective(db: Db, objectiveId: string, approvedBy: string
   } finally {
     releaseApproveLock(db, objectiveId);
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Health & recovery — "is this healthy" and "what did it fix itself"
+ * ------------------------------------------------------------------ */
+
+export interface HealthSnapshot {
+  health: HealthApprox;
+  recovered: RecoveredTask[];
+  windowMs: number;
+}
+
+/** Wraps two functions `@exec/db` already computes for the Telegram morning
+ *  digest (`approximateHealthSince`/`recoveredTasksSince`) but that, until
+ *  now, never reached the dashboard — the digest was the only consumer. */
+export function getHealthSnapshot(db: Db, windowMs = 7 * 24 * 60 * 60 * 1000): HealthSnapshot {
+  const since = Date.now() - windowMs;
+  return {
+    health: approximateHealthSince(db, since),
+    recovered: recoveredTasksSince(db, since),
+    windowMs,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Cost & model attribution
+ * ------------------------------------------------------------------ */
+
+export interface ModelCost {
+  model: string;
+  runs: number;
+  totalCostUsd: number;
+  totalTokens: number;
+}
+
+export interface CostRollup {
+  totalCostUsd: number;
+  totalTokens: number;
+  workerCostUsd: number;
+  judgeCostUsd: number;
+  diagnoserCostUsd: number;
+  byModel: ModelCost[];
+}
+
+/** Every dollar this installation has spent, broken down by which worker
+ *  model earned it and separated from what the judge and diagnoser spent
+ *  independently reviewing that work — the two brain calls whose cost used
+ *  to be computed and immediately discarded (see events.ts's `ReviewResult`/
+ *  `DiagnoseResult`). Full table scans are fine at this tool's scale (a
+ *  single operator's own run history), same tradeoff `listObjectives`
+ *  already makes. */
+export function getCostRollup(db: Db): CostRollup {
+  const runRows = db.select().from(runs).all();
+  const byModel = new Map<string, ModelCost>();
+  let workerCostUsd = 0;
+  let totalTokens = 0;
+  for (const r of runRows) {
+    const tokens = r.usage.input + r.usage.output + r.usage.cacheRead + r.usage.cacheCreation;
+    workerCostUsd += r.costUsdEstimate;
+    totalTokens += tokens;
+    const entry = byModel.get(r.model) ?? { model: r.model, runs: 0, totalCostUsd: 0, totalTokens: 0 };
+    entry.runs += 1;
+    entry.totalCostUsd += r.costUsdEstimate;
+    entry.totalTokens += tokens;
+    byModel.set(r.model, entry);
+  }
+
+  let judgeCostUsd = 0;
+  let diagnoserCostUsd = 0;
+  const brainRows = db
+    .select()
+    .from(events)
+    .where(or(eq(events.type, "review.result"), eq(events.type, "diagnose.result")))
+    .all();
+  for (const row of brainRows) {
+    if (isEvent(row.payload, "review.result")) judgeCostUsd += row.payload.costUsdEstimate ?? 0;
+    if (isEvent(row.payload, "diagnose.result")) diagnoserCostUsd += row.payload.costUsdEstimate ?? 0;
+  }
+
+  return {
+    totalCostUsd: workerCostUsd + judgeCostUsd + diagnoserCostUsd,
+    totalTokens,
+    workerCostUsd,
+    judgeCostUsd,
+    diagnoserCostUsd,
+    byModel: Array.from(byModel.values()).sort((a, b) => b.totalCostUsd - a.totalCostUsd),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Reports — the rich prose artifact (full judge reasoning, full
+ * diagnosis, failed-check output) that until now only ever lived in the
+ * `artifacts` table with no API route reading it back out.
+ * ------------------------------------------------------------------ */
+
+export interface ObjectiveReports {
+  objectiveReport: string | null;
+  taskReports: Record<string, string>;
+}
+
+export function getReports(db: Db, objectiveId: string): ObjectiveReports {
+  const rows = db
+    .select()
+    .from(artifacts)
+    .where(and(eq(artifacts.objectiveId, objectiveId), eq(artifacts.kind, "report")))
+    .orderBy(desc(artifacts.createdAt))
+    .all();
+
+  let objectiveReport: string | null = null;
+  const taskReports: Record<string, string> = {};
+  // Newest first, and a task can be reported on more than once across
+  // retries — first write per key (objective-level, or a given taskId) wins,
+  // which is exactly the newest one given the ordering above.
+  for (const row of rows) {
+    if (typeof row.content !== "string") continue;
+    if (!row.taskId) {
+      if (objectiveReport === null) objectiveReport = row.content;
+    } else if (!(row.taskId in taskReports)) {
+      taskReports[row.taskId] = row.content;
+    }
+  }
+  return { objectiveReport, taskReports };
+}
+
+/* ------------------------------------------------------------------ *
+ * Activity — a global, cross-objective feed. Everything the per-objective
+ * event log already shows, just not scoped to one objective — this is what
+ * makes "who did what, and where" answerable from the front page instead of
+ * requiring a click into every objective in turn.
+ * ------------------------------------------------------------------ */
+
+export interface ActivityItem {
+  id: number;
+  ts: number;
+  level: string;
+  type: string;
+  kind: string;
+  text: string;
+  model: string | null;
+  objectiveId: string | null;
+  objectiveTitle: string | null;
+  taskId: string | null;
+  runId: string | null;
+}
+
+export function listActivity(db: Db, limit = 80): ActivityItem[] {
+  const rows = db.select().from(events).orderBy(desc(events.id)).limit(limit).all();
+  const objRows = db.select({ id: objectives.id, title: objectives.title }).from(objectives).all();
+  const titleById = new Map(objRows.map((o) => [o.id, o.title] as const));
+
+  return rows.map((row) => {
+    const display = describeEvent(row.payload);
+    return {
+      id: row.id,
+      ts: row.ts,
+      level: row.level,
+      type: row.type,
+      kind: display.kind,
+      text: display.text,
+      model: extractModel(row.payload),
+      objectiveId: row.objectiveId,
+      objectiveTitle: row.objectiveId ? (titleById.get(row.objectiveId) ?? null) : null,
+      taskId: row.taskId,
+      runId: row.runId,
+    };
+  });
 }

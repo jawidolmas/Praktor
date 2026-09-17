@@ -6,6 +6,70 @@ function usageTotal(u) {
   return (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheCreation ?? 0);
 }
 
+// Events arriving over the live SSE stream are the only source of the
+// judge/diagnoser's per-attempt verdict this page has — there's no separate
+// "give me the judge's verdict for run X" endpoint, because the event log is
+// already the source of truth for it (see events.ts's own doc comment: every
+// other table is a projection of this log). Keyed by event id so the same
+// event arriving twice (a backlog delivery followed by a reconnect) never
+// double-counts.
+const eventById = new Map();
+
+function ingestEvents(list) {
+  for (const e of list) eventById.set(e.id, e);
+}
+
+/** The latest event of `type` raised against a specific run — a run is
+ *  reviewed/diagnosed at most once, but "latest" is a safe tie-breaker if
+ *  that ever isn't true. */
+function findRunEvent(runId, type) {
+  let found;
+  for (const e of eventById.values()) {
+    if (e.runId === runId && e.type === type && (!found || e.id > found.id)) found = e;
+  }
+  return found;
+}
+
+function pipelineStage(label, cls, bodyHtml) {
+  return `<div class="stage ${cls}"><div class="stage-label">${escapeHtml(label)}</div><div class="stage-body">${bodyHtml}</div></div>`;
+}
+
+/** One attempt's full pipeline: which model did the work, what the
+ *  independent judge decided about it, and — only reached on a non-accept —
+ *  what the failure diagnoser concluded and recommended next. This is the
+ *  "who did the work, and where did it go wrong" view: previously all three
+ *  facts existed only as separate, easy-to-miss lines buried in the live log. */
+function renderRunPipeline(r) {
+  const workerBody = `
+    ${modelBadge(r.model)} ${badge(r.status === "running" ? "running" : r.exitReason ?? r.status)}
+    <div class="stage-detail muted">${r.turns} turns · ${formatTokens(usageTotal(r.usage))} · ${formatUsd(r.costUsdEstimate)}</div>
+    <div class="stage-detail muted">started ${timeAgo(r.startedAt)}</div>`;
+
+  const reviewEvent = findRunEvent(r.id, "review.result");
+  const judgeCls = reviewEvent ? `stage-${reviewEvent.kind}` : "stage-pending";
+  const judgeBody = reviewEvent
+    ? `${reviewEvent.model ? modelBadge(reviewEvent.model) : ""}<div class="stage-detail">${escapeHtml(reviewEvent.text)}</div>`
+    : `<div class="stage-detail muted">${r.status === "running" ? "in progress…" : "not reached (acceptance failed before review)"}</div>`;
+
+  const diagnoseEvent = findRunEvent(r.id, "diagnose.result");
+  const diagnoseCls = diagnoseEvent ? `stage-${diagnoseEvent.kind}` : "stage-pending";
+  const diagnoseBody = diagnoseEvent
+    ? `${diagnoseEvent.model ? modelBadge(diagnoseEvent.model) : ""}<div class="stage-detail">${escapeHtml(diagnoseEvent.text)}</div>`
+    : `<div class="stage-detail muted">${reviewEvent?.text === "Judge: accepted" ? "not needed — accepted" : "not reached"}</div>`;
+
+  return `
+    <div class="pipeline">
+      <div class="pipeline-attempt muted">Attempt ${r.attempt}</div>
+      <div class="pipeline-row">
+        ${pipelineStage("Worker", "stage-worker", workerBody)}
+        <div class="stage-arrow">→</div>
+        ${pipelineStage("Judge", judgeCls, judgeBody)}
+        <div class="stage-arrow">→</div>
+        ${pipelineStage("Diagnoser", diagnoseCls, diagnoseBody)}
+      </div>
+    </div>`;
+}
+
 function renderHeader(objective) {
   document.getElementById("crumb").textContent = `/ ${objective.title}`;
   document.title = `${objective.title} — Praktor Dashboard`;
@@ -32,37 +96,61 @@ function renderTasks(tasks, runs) {
   el.innerHTML = tasks
     .map((task) => {
       const taskRuns = runs.filter((r) => r.taskId === task.id).sort((a, b) => a.attempt - b.attempt);
-      const runRows = taskRuns
-        .map(
-          (r) => `
-        <tr>
-          <td class="muted">attempt ${r.attempt}</td>
-          <td>${badge(r.status === "running" ? "running" : r.exitReason ?? r.status)}</td>
-          <td class="mono">${r.model}</td>
-          <td>${r.turns}</td>
-          <td class="mono">${usageTotal(r.usage).toLocaleString()} tok</td>
-          <td>$${r.costUsdEstimate.toFixed(4)}</td>
-          <td class="muted">${timeAgo(r.startedAt)}</td>
-        </tr>`,
-        )
-        .join("");
+      const pipelines = taskRuns.map((r) => renderRunPipeline(r)).join("");
       return `
-        <table>
-          <thead>
-            <tr>
-              <th colspan="7">
-                ${escapeHtml(task.key)} — ${escapeHtml(task.title)}
-                ${badge(task.status)}
-                <span class="muted mono">(${task.taskClass}, ${task.attempts}/${task.maxAttempts} attempts)</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            ${runRows || '<tr><td colspan="7" class="empty">No runs yet.</td></tr>'}
-          </tbody>
-        </table>`;
+        <div class="task-block">
+          <div class="task-block-head">
+            <span class="mono">${escapeHtml(task.key)}</span>
+            <span class="task-block-title">${escapeHtml(task.title)}</span>
+            ${badge(task.status)}
+            <span class="muted mono">${escapeHtml(task.taskClass)} · ${task.attempts}/${task.maxAttempts} attempts</span>
+          </div>
+          ${pipelines || '<div class="empty">No runs yet.</div>'}
+        </div>`;
     })
     .join("");
+}
+
+/** The rich prose report artifact — full judge reasoning, full diagnosis,
+ *  failing-check output — kept separate from the pipeline cards above
+ *  (which show the structured, at-a-glance verdict) since this is the
+ *  "I want the whole story" escape hatch, not something to dump inline by
+ *  default. */
+// Same reasoning as the decisions/approval panels below: reports arrive on
+// every poll (a live run triggers a refresh per event), and rebuilding
+// unconditionally would collapse a `<details>` the moment someone opened it
+// to actually read a report.
+let lastReportsKey;
+
+function renderReports(reports, tasks) {
+  const key = JSON.stringify(reports);
+  if (key === lastReportsKey) return;
+  lastReportsKey = key;
+
+  const panel = document.getElementById("reportsPanel");
+  const el = document.getElementById("reports");
+  const taskEntries = Object.entries(reports.taskReports || {});
+  const hasAny = Boolean(reports.objectiveReport) || taskEntries.length > 0;
+  panel.hidden = !hasAny;
+  if (!hasAny) return;
+
+  const taskLabelById = new Map(tasks.map((t) => [t.id, `${t.key} — ${t.title}`]));
+  const parts = [];
+  if (reports.objectiveReport) {
+    parts.push(`
+      <details class="report-entry">
+        <summary>Objective summary</summary>
+        <pre class="report-body">${escapeHtml(reports.objectiveReport)}</pre>
+      </details>`);
+  }
+  for (const [taskId, content] of taskEntries) {
+    parts.push(`
+      <details class="report-entry">
+        <summary>${escapeHtml(taskLabelById.get(taskId) || taskId)}</summary>
+        <pre class="report-body">${escapeHtml(content)}</pre>
+      </details>`);
+  }
+  el.innerHTML = parts.join("");
 }
 
 // Same reasoning as renderApproval's guard below: an unconditional re-render
@@ -233,9 +321,13 @@ async function refreshApproval() {
 }
 
 async function refreshDetail() {
-  const detail = await fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}`);
+  const [detail, reports] = await Promise.all([
+    fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}`),
+    fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/reports`),
+  ]);
   renderHeader(detail.objective);
   renderTasks(detail.tasks, detail.runs);
+  renderReports(reports, detail.tasks);
   renderDecisions(detail.decisions);
   await refreshApproval();
 }
@@ -290,8 +382,17 @@ function connectStream() {
   };
   source.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
-    if (data.backlog) appendLogLines(data.backlog);
-    if (data.events) appendLogLines(data.events);
+    if (data.backlog) {
+      appendLogLines(data.backlog);
+      ingestEvents(data.backlog);
+    }
+    if (data.events) {
+      appendLogLines(data.events);
+      ingestEvents(data.events);
+    }
+    // Re-render the pipeline cards (not just the raw log) once the judge or
+    // diagnoser's verdict for this attempt actually lands — scheduleRefresh
+    // already debounces this, so a burst of turns doesn't refetch per event.
     if (data.backlog?.length || data.events?.length) scheduleRefresh();
   };
 }

@@ -87,14 +87,16 @@ export function describeEvent(payload: EventPayload): EventDisplay {
         text: payload.passed ? "Acceptance passed" : `Acceptance failed: ${payload.failedLabels.join(", ")}`,
       };
 
-    case "review.result":
+    case "review.result": {
+      const missing = payload.missing.length ? ` (missing: ${payload.missing.join(", ")})` : "";
       return {
         kind: payload.verdict === "accept" ? "success" : "warn",
         text:
           payload.verdict === "accept"
             ? "Judge: accepted"
-            : `Judge: ${payload.verdict} — ${payload.reasons.join("; ") || "no reason given"}`,
+            : `Judge: ${payload.verdict} — ${payload.reasons.join("; ") || "no reason given"}${missing}`,
       };
+    }
 
     case "diagnose.result":
       return { kind: "info", text: `Diagnosis: ${payload.class} — ${truncate(payload.cause, 200)} (next: ${payload.nextAction})` };

@@ -533,7 +533,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
           objectiveId: objective.id,
           taskId: task.id,
           runId,
-          payload: { type: "brain.call", site: "review", ok: true, durationMs: reviewResult.durationMs },
+          payload: { type: "brain.call", site: "review", ok: true, durationMs: reviewResult.durationMs, model: task.model },
         });
         appendEvent(db, {
           objectiveId: objective.id,
@@ -544,6 +544,9 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
             verdict: reviewOutcome.verdict,
             reasons: reviewOutcome.reasons,
             missing: reviewOutcome.missing,
+            model: task.model,
+            usage: reviewResult.usage,
+            costUsdEstimate: reviewResult.costUsdEstimate,
           },
         });
       } catch (err) {
@@ -557,7 +560,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
           objectiveId: objective.id,
           taskId: task.id,
           runId,
-          payload: { type: "brain.call", site: "review", ok: false, durationMs: 0 },
+          payload: { type: "brain.call", site: "review", ok: false, durationMs: 0, model: task.model },
         });
         reviewOutcome = { verdict: "accept", reasons: [], missing: [] };
       }
@@ -651,7 +654,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
         objectiveId: objective.id,
         taskId: task.id,
         runId,
-        payload: { type: "brain.call", site: "diagnose", ok: true, durationMs: diagnoseResult.durationMs },
+        payload: { type: "brain.call", site: "diagnose", ok: true, durationMs: diagnoseResult.durationMs, model: task.model },
       });
       appendEvent(db, {
         objectiveId: objective.id,
@@ -662,6 +665,9 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
           cause: diagnosis.cause,
           class: diagnosis.class,
           nextAction: diagnosis.nextAction,
+          model: task.model,
+          usage: diagnoseResult.usage,
+          costUsdEstimate: diagnoseResult.costUsdEstimate,
         },
       });
     } catch (err) {
@@ -673,7 +679,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
         objectiveId: objective.id,
         taskId: task.id,
         runId,
-        payload: { type: "brain.call", site: "diagnose", ok: false, durationMs: 0 },
+        payload: { type: "brain.call", site: "diagnose", ok: false, durationMs: 0, model: task.model },
       });
     }
 

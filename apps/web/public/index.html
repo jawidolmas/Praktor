@@ -9,42 +9,126 @@
 <body>
   <header class="topbar">
     <div class="brand">Praktor <span>supervisor dashboard</span></div>
-    <div class="muted mono" id="clock"></div>
+    <div class="topbar-right">
+      <span class="live-dot" id="pollDot"></span>
+      <span class="muted mono" id="clock"></span>
+    </div>
   </header>
+
+  <nav class="tabbar" id="tabbar">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="objectives">Objectives</button>
+    <button class="tab-btn" data-tab="decisions">Decisions<span class="tab-dot" id="decisionsTabDot" hidden></span></button>
+    <button class="tab-btn" data-tab="health">Health &amp; recovery</button>
+    <button class="tab-btn" data-tab="cost">Cost &amp; models</button>
+    <button class="tab-btn" data-tab="governance">Policies &amp; profile</button>
+  </nav>
+
   <main>
-    <section class="panel">
-      <h2>Daemon</h2>
-      <div id="daemon-status"><div class="empty">Loading…</div></div>
-    </section>
+    <!-- ============================== Overview ============================== -->
+    <section class="tab-page" data-tab="overview">
+      <section class="panel">
+        <h2>Daemon</h2>
+        <div id="daemon-status"><div class="empty">Loading…</div></div>
+      </section>
 
-    <section class="panel" id="decisionsPanel" hidden>
-      <h2>Decisions needing an answer</h2>
-      <div id="decisions"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Objectives</h2>
-      <div id="objective-summary" class="summary-row"></div>
-      <div class="toolbar">
-        <div class="filter-tabs" id="statusFilter">
-          <button class="filter-tab active" data-filter="attention">Needs attention</button>
-          <button class="filter-tab" data-filter="all">All</button>
-          <button class="filter-tab" data-filter="done">Done</button>
-          <button class="filter-tab" data-filter="failed">Failed</button>
-        </div>
-        <input type="text" id="objectiveSearch" class="search-input" placeholder="Filter by title or repo…" />
+      <div class="kpi-row" id="kpiRow">
+        <div class="kpi-card"><div class="kpi-label">Active objectives</div><div class="kpi-value" id="kpiActive">–</div></div>
+        <div class="kpi-card"><div class="kpi-label">Open decisions</div><div class="kpi-value" id="kpiDecisions">–</div></div>
+        <div class="kpi-card"><div class="kpi-label">Total spend</div><div class="kpi-value" id="kpiCost">–</div></div>
+        <div class="kpi-card"><div class="kpi-label">Judge accept (7d)</div><div class="kpi-value" id="kpiHealth">–</div></div>
       </div>
-      <div id="objectives"><div class="empty">Loading…</div></div>
+
+      <section class="panel" id="decisionsPanel" hidden>
+        <h2>Decisions needing an answer</h2>
+        <div id="decisions"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Updates</h2>
+        <div class="panel-subhead">Everything happening across every objective — which model ran it, what the judge decided, what broke and how it recovered.</div>
+        <div id="activity" class="activity-feed"><div class="empty">Loading…</div></div>
+      </section>
     </section>
 
-    <section class="panel">
-      <h2>Policies</h2>
-      <div id="policies"><div class="empty">Loading…</div></div>
+    <!-- ============================== Objectives ============================== -->
+    <section class="tab-page" data-tab="objectives" hidden>
+      <section class="panel">
+        <h2>Objectives</h2>
+        <div id="objective-summary" class="summary-row"></div>
+        <div class="toolbar">
+          <div class="filter-tabs" id="statusFilter">
+            <button class="filter-tab active" data-filter="attention">Needs attention</button>
+            <button class="filter-tab" data-filter="all">All</button>
+            <button class="filter-tab" data-filter="done">Done</button>
+            <button class="filter-tab" data-filter="failed">Failed</button>
+          </div>
+          <input type="text" id="objectiveSearch" class="search-input" placeholder="Filter by title or repo…" />
+        </div>
+        <div id="objectives"><div class="empty">Loading…</div></div>
+      </section>
     </section>
 
-    <section class="panel">
-      <h2>Engineering profile</h2>
-      <div id="profile"><div class="empty">Loading…</div></div>
+    <!-- ============================== Decisions ============================== -->
+    <section class="tab-page" data-tab="decisions" hidden>
+      <section class="panel">
+        <h2>Decision audit log</h2>
+        <div class="panel-subhead">Every decision ever raised — who answered it, through which channel, and whether it was pushed to Telegram.</div>
+        <div class="toolbar">
+          <div class="filter-tabs" id="decisionFilter">
+            <button class="filter-tab active" data-filter="open">Open</button>
+            <button class="filter-tab" data-filter="answered">Answered</button>
+            <button class="filter-tab" data-filter="all">All</button>
+          </div>
+        </div>
+        <div id="decisionHistory"><div class="empty">Loading…</div></div>
+      </section>
+    </section>
+
+    <!-- ============================== Health & recovery ============================== -->
+    <section class="tab-page" data-tab="health" hidden>
+      <section class="panel">
+        <h2>System health (last 7 days)</h2>
+        <div class="panel-subhead">Best-effort proxies from signals Praktor already has — undefined when there's no data yet, never a misleading 0% or 100%.</div>
+        <div id="healthGauges" class="gauge-row"><div class="empty">Loading…</div></div>
+      </section>
+
+      <section class="panel">
+        <h2>Recovered automatically</h2>
+        <div class="panel-subhead">Tasks that failed, were diagnosed, and finished anyway — no one had to step in.</div>
+        <div id="recovered"><div class="empty">Loading…</div></div>
+      </section>
+    </section>
+
+    <!-- ============================== Cost & models ============================== -->
+    <section class="tab-page" data-tab="cost" hidden>
+      <section class="panel">
+        <h2>Spend</h2>
+        <div class="kpi-row" id="costKpiRow">
+          <div class="kpi-card"><div class="kpi-label">Total spend</div><div class="kpi-value" id="costTotal">–</div></div>
+          <div class="kpi-card"><div class="kpi-label">Worker</div><div class="kpi-value" id="costWorker">–</div></div>
+          <div class="kpi-card"><div class="kpi-label">Judge</div><div class="kpi-value" id="costJudge">–</div></div>
+          <div class="kpi-card"><div class="kpi-label">Diagnoser</div><div class="kpi-value" id="costDiagnoser">–</div></div>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>By model</h2>
+        <div class="panel-subhead">Which model actually did the work, and what it cost.</div>
+        <div id="modelCosts"><div class="empty">Loading…</div></div>
+      </section>
+    </section>
+
+    <!-- ============================== Policies & profile ============================== -->
+    <section class="tab-page" data-tab="governance" hidden>
+      <section class="panel">
+        <h2>Policies</h2>
+        <div id="policies"><div class="empty">Loading…</div></div>
+      </section>
+
+      <section class="panel">
+        <h2>Engineering profile</h2>
+        <div id="profile"><div class="empty">Loading…</div></div>
+      </section>
     </section>
 
     <footer class="hint">Objectives are driven by the supervisor daemon — this page just reads and, for decisions, answers into the same database.</footer>

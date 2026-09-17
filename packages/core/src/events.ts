@@ -137,21 +137,32 @@ const VerifyResult = z.object({
 /** The independent judge's verdict on a task whose mechanical acceptance
  *  checks already passed — see `ReviewOutput` in contracts.ts. Only fires
  *  once acceptance is green; a `revise`/`reject` here is what stops a worker
- *  from being the one to declare its own task "done." */
+ *  from being the one to declare its own task "done." `usage`/`costUsdEstimate`
+ *  and `model` are optional so a row written before this field existed still
+ *  parses — the judge's own spend was computed by brain.ts from the start but
+ *  silently dropped by the caller until this was added. */
 const ReviewResult = z.object({
   type: z.literal("review.result"),
   verdict: z.enum(["accept", "revise", "reject"]),
   reasons: z.array(z.string()).default([]),
   missing: z.array(z.string()).default([]),
+  model: z.string().optional(),
+  usage: TokenUsageSchema.optional(),
+  costUsdEstimate: z.number().optional(),
 });
 
 /** The failure-classifier's read on why an attempt didn't make it, and what
- *  the supervisor should do next — see `DiagnoseOutput` in contracts.ts. */
+ *  the supervisor should do next — see `DiagnoseOutput` in contracts.ts.
+ *  `usage`/`costUsdEstimate`/`model` optional for the same reason as
+ *  `ReviewResult`'s. */
 const DiagnoseResult = z.object({
   type: z.literal("diagnose.result"),
   cause: z.string(),
   class: z.enum(["flaky", "bug", "spec", "env"]),
   nextAction: z.enum(["retry", "retry_with_hint", "respawn", "escalate", "abandon"]),
+  model: z.string().optional(),
+  usage: TokenUsageSchema.optional(),
+  costUsdEstimate: z.number().optional(),
 });
 
 /* -- escalation and limits -- */
@@ -189,6 +200,7 @@ const BrainCall = z.object({
   site: z.string(),
   ok: z.boolean(),
   durationMs: z.number().int(),
+  model: z.string().optional(),
 });
 
 const FindingRecorded = z.object({

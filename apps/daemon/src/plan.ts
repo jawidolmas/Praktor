@@ -26,7 +26,7 @@ export async function planObjective(db: Db, objective: ObjectiveRow): Promise<vo
     });
     appendEvent(db, {
       objectiveId: objective.id,
-      payload: { type: "brain.call", site: "decompose", ok: true, durationMs },
+      payload: { type: "brain.call", site: "decompose", ok: true, durationMs, model: objective.model },
     });
     const tasks = createTasksFromPlan(db, {
       objectiveId: objective.id,
@@ -44,7 +44,7 @@ export async function planObjective(db: Db, objective: ObjectiveRow): Promise<vo
     );
     appendEvent(db, {
       objectiveId: objective.id,
-      payload: { type: "brain.call", site: "decompose", ok: false, durationMs: Date.now() - startedAt },
+      payload: { type: "brain.call", site: "decompose", ok: false, durationMs: Date.now() - startedAt, model: objective.model },
     });
     createTasksFromPlan(db, {
       objectiveId: objective.id,

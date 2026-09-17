@@ -7,9 +7,14 @@ import {
   answerOpenDecision,
   approveObjective,
   getApprovalStatus,
+  getCostRollup,
   getDaemonStatus,
+  getHealthSnapshot,
   getObjective,
   getObjectiveEvents,
+  getReports,
+  listActivity,
+  listDecisionHistory,
   listObjectives,
   listOpenDecisions,
   listPolicies,
@@ -189,12 +194,36 @@ export function createDashboardServer(db: Db) {
         return sendJson(res, 200, listOpenDecisions(db));
       }
 
+      if (path === "/api/decisions/history") {
+        return sendJson(res, 200, listDecisionHistory(db));
+      }
+
       if (path === "/api/policies") {
         return sendJson(res, 200, listPolicies(db));
       }
 
       if (path === "/api/profile") {
         return sendJson(res, 200, listProfile(db));
+      }
+
+      if (path === "/api/health") {
+        const days = Number(url.searchParams.get("days") ?? "7");
+        const windowMs = (Number.isFinite(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000;
+        return sendJson(res, 200, getHealthSnapshot(db, windowMs));
+      }
+
+      if (path === "/api/costs") {
+        return sendJson(res, 200, getCostRollup(db));
+      }
+
+      if (path === "/api/activity") {
+        const limit = Number(url.searchParams.get("limit") ?? "80");
+        return sendJson(res, 200, listActivity(db, Number.isFinite(limit) && limit > 0 ? limit : 80));
+      }
+
+      const reportsMatch = path.match(/^\/api\/objectives\/([^/]+)\/reports$/);
+      if (reportsMatch?.[1]) {
+        return sendJson(res, 200, getReports(db, reportsMatch[1]));
       }
 
       if (path.startsWith("/api/")) {

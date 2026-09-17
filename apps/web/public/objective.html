@@ -19,7 +19,14 @@
 
     <section class="panel">
       <h2>Tasks &amp; runs</h2>
+      <div class="panel-subhead">Every attempt, and the full pipeline that judged it — worker model → independent judge → failure diagnoser → human decision.</div>
       <div id="tasks"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section class="panel" id="reportsPanel" hidden>
+      <h2>Full reports</h2>
+      <div class="panel-subhead">The complete prose write-up per task — full judge reasoning, full diagnosis, failing check output — not just the one-line summary in the event log.</div>
+      <div id="reports"></div>
     </section>
 
     <section class="panel">
