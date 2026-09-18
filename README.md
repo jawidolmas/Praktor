@@ -100,7 +100,11 @@ exec-agent do "add a CONTRIBUTING.md in my-project"
 exec-agent looks for a git repo named `my-project` under `~/Desktop` by default (see
 Configuration below to widen that search), infers a check appropriate to the request (a file-add
 gets a real existence check; anything else falls back to a "something changed" check and tells
-you so), and then runs the whole loop end to end.
+you so), and then runs the whole loop end to end. Naming a repo that doesn't exist yet works too,
+as long as the sentence gives an explicit location — `"build it in Desktop/my-new-site"` creates
+and initializes it (a plain, empty commit is all it starts with) rather than failing closed. A
+bare name with no location (`"add X to my-projject"`, say, a typo of an existing repo) still
+fails closed with the list of known repos, rather than risk silently creating a stray duplicate.
 
 The explicit path — state everything yourself, including a real acceptance command:
 

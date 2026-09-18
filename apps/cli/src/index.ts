@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { answerDecision, cancelObjective, openDb, runMigrations } from "@exec/db";
 import { approveObjective } from "./approve.js";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
@@ -13,7 +14,7 @@ import { printEvents } from "./events.js";
 import { inferCheck } from "./infer.js";
 import { printObjectiveList } from "./list.js";
 import { printProfileList, setProfileEntry, unsetProfileEntry } from "./profile.js";
-import { resolveRepoFromText } from "./resolve-repo.js";
+import { createRepoAt, resolveCreateTarget, resolveRepoFromText } from "./resolve-repo.js";
 import { submitAndWatch, tailObjective } from "./run.js";
 
 const USAGE = `
@@ -156,14 +157,28 @@ async function runDo(argv: string[]): Promise<void> {
       process.exitCode = 1;
       return;
     } else {
-      const known = resolved.known.map((c) => c.name).join(", ") || "(none found)";
-      console.error(
-        `Couldn't find a repo mentioned in that sentence under the search path.\n` +
-          `Known repos: ${known}\n` +
-          `Pass --repo explicitly, or set EXEC_REPO_SEARCH_PATHS to widen the search.`,
-      );
-      process.exitCode = 1;
-      return;
+      const createTarget = resolveCreateTarget(sentence);
+      if (createTarget && existsSync(createTarget)) {
+        console.error(
+          `${createTarget} already exists but isn't a git repo — run "git init" there yourself ` +
+            `if you want it used, or name a location that doesn't exist yet.`,
+        );
+        process.exitCode = 1;
+        return;
+      } else if (createTarget) {
+        createRepoAt(createTarget);
+        repoPath = createTarget;
+        console.log(`Created a new repo at ${createTarget}`);
+      } else {
+        const known = resolved.known.map((c) => c.name).join(", ") || "(none found)";
+        console.error(
+          `Couldn't find a repo mentioned in that sentence under the search path.\n` +
+            `Known repos: ${known}\n` +
+            `Pass --repo explicitly, or set EXEC_REPO_SEARCH_PATHS to widen the search.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
     }
   }
 
