@@ -29,7 +29,8 @@
         "Released `v0.2.1` — the worker, the independent judge, and the failure diagnoser can now query a local graphify knowledge graph via MCP instead of grepping raw files, and the dashboard shows it",
         "Gave the worker a second MCP server backed by graphify — a local, LLM-free per-repo call graph — with `query_graph`/`get_neighbors`/`shortest_path`/`god_nodes` preferred over Grep/Read for architecture questions",
         "Gave the independent judge and the failure diagnoser the same graph access — the judge checks blast radius (a changed function breaking a caller the acceptance checks never exercise), the diagnoser checks whether a failure's real cause sits outside the attempt's own diff",
-        "Added a \"Knowledge graph\" panel to the dashboard's objective page — node/edge/community/file counts, a confidence breakdown, and the most-connected code by degree"
+        "Added a \"Knowledge graph\" panel to the dashboard's objective page — node/edge/community/file counts, a confidence breakdown, and the most-connected code by degree",
+        "Relicensed from MIT to Apache-2.0 — same freedom to use, modify, and fork into your own project, plus an explicit patent grant and retaliation clause"
       ]
     },
     {
