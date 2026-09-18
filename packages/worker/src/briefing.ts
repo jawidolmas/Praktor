@@ -18,6 +18,11 @@ export interface RepoBriefing {
   fileList: string[];
   fileListTotal: number;
   docExcerpts: { file: string; excerpt: string; truncated: boolean }[];
+  /** Whether a graphify knowledge-graph MCP server is wired up for this
+   *  attempt. Set by the caller (the driver knows whether `ensureGraphForRepo`
+   *  succeeded) — `buildRepoBriefing` itself only reads the worktree, so it
+   *  cannot know this on its own. */
+  graphAvailable?: boolean;
 }
 
 const DOC_CANDIDATES = ["README.md", "README", "CONTRIBUTING.md", "AGENTS.md", "CLAUDE.md"];
@@ -96,13 +101,28 @@ export function buildRepoBriefing(worktreePath: string): RepoBriefing {
 }
 
 export function renderBriefing(briefing: RepoBriefing): string {
-  if (briefing.fileList.length === 0 && briefing.docExcerpts.length === 0) return "";
+  if (
+    briefing.fileList.length === 0 &&
+    briefing.docExcerpts.length === 0 &&
+    !briefing.graphAvailable
+  ) {
+    return "";
+  }
 
   const lines: string[] = [
     "Repository briefing — read this first; it replaces the usual first few " +
       "orientation commands, so you should not need find/ls/pwd or a Glob just to " +
       "see what's here:",
   ];
+
+  if (briefing.graphAvailable) {
+    lines.push(
+      "\nA knowledge graph of this repo is available via the graphify MCP tools " +
+        "(query_graph, get_neighbors, shortest_path, god_nodes) — prefer them over " +
+        "Grep/Read/Glob for architecture, call-graph, or \"what would this break\" " +
+        "questions; they return a small, targeted answer instead of whole files.",
+    );
+  }
 
   if (briefing.fileList.length > 0) {
     const suffix =

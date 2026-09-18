@@ -65,6 +65,16 @@ This is v0.1. What exists today:
   bill separately. Every worker run draws from the same Claude Pro/Max usage pool as your normal
   Claude Code sessions, so heavy concurrent use of both will deplete your quota faster, but a
   given task does not cost double just because exec-agent is the one driving it.
+- **Python 3.10+ and [uv](https://docs.astral.sh/uv/)**, for
+  [graphify](https://github.com/Graphify-Labs/graphify) (Apache-2.0) — a local, deterministic
+  knowledge-graph tool exec-agent hands every worker as a second MCP server, so architecture and
+  call-graph questions are answered by a targeted graph query instead of re-grepping and
+  re-reading raw files from scratch on every attempt. It runs entirely on your machine (tree-sitter
+  parsing, no LLM call, no account, no network call for this) — see
+  [Knowledge graph](#knowledge-graph-graphify) below. Install it with:
+  ```bash
+  uv tool install 'graphifyy[mcp]'
+  ```
 
 ## Install
 
@@ -175,7 +185,12 @@ the terminal prompt — which lands the same `answerDecision` write the CLI's `d
 makes; SQLite's WAL mode is what lets this, the CLI, and the daemon all touch the database
 concurrently without blocking each other. Once an objective is done, its "Review & approve" panel
 shows the real diff against your repo, colored like a normal diff view — the Merge button behind
-it runs the same merge-and-push `exec-agent approve` does, gated on you clicking it.
+it runs the same merge-and-push `exec-agent approve` does, gated on you clicking it. Each
+objective's page also has a "Knowledge graph" panel — node/edge/community/file counts, an
+EXTRACTED/INFERRED/AMBIGUOUS confidence breakdown, and the most-connected concepts in the repo by
+degree — reading the same graphify graph.json the worker/judge/diagnoser already query (see
+[Knowledge graph](#knowledge-graph-graphify) below); it never shells out to `graphify` itself, only
+the daemon does that.
 
 ## Telegram bridge
 
@@ -220,6 +235,7 @@ All via environment variables (see `.env.example`):
 | `EXEC_WORKTREES_DIR` | `~/.exec-agent/worktrees` | Where worker git worktrees are created. |
 | `EXEC_REPO_SEARCH_PATHS` | *(unset)* | Extra directories `do` should search for repos, beyond `~/Desktop`. Comma- or semicolon-separated. |
 | `EXEC_MAX_WORKERS` | `1` | Worker concurrency. Realistic value is 1 on a Pro plan; this build only ever runs one worker anyway (see Status). |
+| `EXEC_GRAPHS_DIR` | `~/.exec-agent/graphs` | Where per-repo graphify knowledge graphs are cached — see [Knowledge graph](#knowledge-graph-graphify). |
 
 Run options (flags on `run`, and overrides on `do`): `--model`, `--effort`
 (`low|medium|high|xhigh|max`, default `medium`), `--max-attempts`, `--max-turns`,
@@ -237,10 +253,32 @@ before the tool call is ever allowed to run. Built-in policies are kept in sync 
 every run (matched by title), so a fix to a shipped policy reaches an install that's already been
 running, not just fresh databases.
 
-## Development
+## Knowledge graph (graphify)
 
-```bash
-npm run typecheck   # tsc --build across the whole workspace
+Before spawning a worker, exec-agent runs `graphify update` against the objective's repo — a
+local, deterministic tree-sitter AST pass over the codebase, no LLM call, no network call. The
+result is cached at `$EXEC_GRAPHS_DIR/<repo-hash>/graph.json`, entirely outside the repo itself,
+and shared across every task and attempt run against that repo (`graphify update` re-extracts only
+changed files on repeat calls, so this stays cheap over an objective's life, not just its first
+run). That graph is then handed to the worker as a second MCP server (`graphify-mcp`), alongside
+exec-agent's own tools, exposing `query_graph`, `get_neighbors`, `shortest_path`, and `god_nodes` —
+the worker's briefing steers it toward these instead of Grep/Read/Glob for architecture and
+call-graph questions, so "how does X call Y" costs a targeted graph query instead of re-reading
+whole files from scratch in every attempt.
+
+The independent judge and the failure-diagnoser (see below and "Status" above) get the same MCP
+server, not just the worker: the judge is told to check blast radius with `shortest_path`/
+`get_neighbors` — whether a changed function is still referenced somewhere the diff doesn't touch,
+which the acceptance checks alone can't catch — and the diagnoser is told to consider whether a
+failure's real cause sits outside the files the failed attempt itself edited. Both are told about
+these tools only when a graph actually exists for that repo, the same way the worker's briefing is.
+
+graphify is a hard prerequisite, not an optional extra — see [Prerequisites](#prerequisites). If
+it isn't installed, or its build fails for a specific repo, the worker still runs (just without
+that MCP server for the attempt), and a `graphify.unavailable` event is written to the objective's
+event log rather than the gap passing silently.
+
+## Policy engine
 npm test            # vitest, full suite
 ```
 

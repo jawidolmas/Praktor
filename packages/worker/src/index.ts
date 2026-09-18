@@ -3,6 +3,7 @@ export * from "./briefing.js";
 export * from "./profile.js";
 export * from "./live.js";
 export * from "./worktree.js";
+export * from "./graphify.js";
 export * from "./integration.js";
 export * from "./verify.js";
 export * from "./checkpoint.js";

@@ -10,6 +10,7 @@ import {
   type TokenUsage,
 } from "@exec/core";
 import { buildRepoBriefing, renderBriefing } from "./briefing.js";
+import { graphifyMcpServer } from "./graphify.js";
 import { renderEngineeringProfile, type ProfileEntry } from "./profile.js";
 import { diffPatch } from "./worktree.js";
 import type { StallSignal } from "./telemetry.js";
@@ -225,6 +226,12 @@ export interface ReviewArgs {
    *  a needless abstraction) — the acceptance checks structurally cannot
    *  express that, and the worker has no reason to know it unprompted. */
   profile?: ProfileEntry[];
+  /** Path to a graphify graph.json for this repo, if one is available (same
+   *  source as `RunWorkerArgs.graphPath` in driver.ts). Lets the judge check
+   *  blast radius — e.g. whether a changed function is called anywhere the
+   *  diff doesn't touch — instead of relying on Read/Grep alone to notice
+   *  that. */
+  graphPath?: string;
 }
 
 export interface ReviewResult {
@@ -240,26 +247,39 @@ function renderVerifySummary(verify: VerifyOutcome): string {
     .join("\n");
 }
 
-const REVIEWER_INSTRUCTIONS =
-  "You are reviewing one finished task, not implementing anything. Its mechanical acceptance " +
-  "checks already passed — your job is the question those checks cannot ask: does this diff " +
-  "actually do what the intent below asked for, in a way a reasonable person would call done?\n" +
-  "Specifically check for:\n" +
-  "- Requirements stated or clearly implied by the intent that the diff does not address.\n" +
-  "- Files changed that have nothing to do with the intent — acceptance checks only prove the " +
-  "target behavior exists, not that nothing unrelated was touched.\n" +
-  "- A change that is locally plausible but globally wrong for this repo (contradicts an " +
-  "existing pattern, duplicates something that already exists, or solves a narrower or " +
-  "different problem than what was asked).\n" +
-  "- A violation of the standing engineering profile below, if one is given, even when the " +
-  "diff otherwise satisfies the intent — e.g. an unnecessary dependency or abstraction the " +
-  "profile says to avoid is a real reason to send this back, not a stylistic nitpick.\n" +
-  "You may Read and Grep the actual files, not just the diff text, before deciding.\n" +
-  "Use 'accept' only when you would be comfortable this task never gets looked at again. Use " +
-  "'revise' when it is close but something concrete is missing or wrong. Use 'reject' when it " +
-  "does not address the intent at all. List every concrete reason — a respawned worker only " +
-  "sees what you write here, not your reasoning.\n" +
-  "Call submit_review exactly once, when you have decided. Do not edit, write, or run anything.";
+/** A separate function, not a constant, because the blast-radius bullet only
+ *  makes sense — and only names tools that actually exist for this call —
+ *  when a graphify graph was handed to this session. Telling the judge about
+ *  a tool it doesn't have would just send it searching for one. */
+function reviewerInstructions(graphAvailable: boolean): string {
+  return (
+    "You are reviewing one finished task, not implementing anything. Its mechanical acceptance " +
+    "checks already passed — your job is the question those checks cannot ask: does this diff " +
+    "actually do what the intent below asked for, in a way a reasonable person would call done?\n" +
+    "Specifically check for:\n" +
+    "- Requirements stated or clearly implied by the intent that the diff does not address.\n" +
+    "- Files changed that have nothing to do with the intent — acceptance checks only prove the " +
+    "target behavior exists, not that nothing unrelated was touched.\n" +
+    "- A change that is locally plausible but globally wrong for this repo (contradicts an " +
+    "existing pattern, duplicates something that already exists, or solves a narrower or " +
+    "different problem than what was asked).\n" +
+    (graphAvailable
+      ? "- Blast radius: use the graphify MCP tools (shortest_path, get_neighbors) to check " +
+        "whether a changed function, type, or export is referenced anywhere this diff doesn't " +
+        "touch — a rename or signature change that breaks an unrelated caller the acceptance " +
+        "checks never exercise is exactly what this check is for.\n"
+      : "") +
+    "- A violation of the standing engineering profile below, if one is given, even when the " +
+    "diff otherwise satisfies the intent — e.g. an unnecessary dependency or abstraction the " +
+    "profile says to avoid is a real reason to send this back, not a stylistic nitpick.\n" +
+    "You may Read and Grep the actual files, not just the diff text, before deciding.\n" +
+    "Use 'accept' only when you would be comfortable this task never gets looked at again. Use " +
+    "'revise' when it is close but something concrete is missing or wrong. Use 'reject' when it " +
+    "does not address the intent at all. List every concrete reason — a respawned worker only " +
+    "sees what you write here, not your reasoning.\n" +
+    "Call submit_review exactly once, when you have decided. Do not edit, write, or run anything."
+  );
+}
 
 export function buildReviewerPrompt(args: ReviewArgs, briefing: string, patch: string): string {
   return [
@@ -269,7 +289,7 @@ export function buildReviewerPrompt(args: ReviewArgs, briefing: string, patch: s
     `Intent: ${args.intent}`,
     `Acceptance checks (already passed):\n${renderVerifySummary(args.verify)}`,
     `Diff since the base commit:\n\`\`\`diff\n${patch || "(no diff — nothing changed on disk)"}\n\`\`\``,
-    REVIEWER_INSTRUCTIONS,
+    reviewerInstructions(args.graphPath !== undefined),
   ]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
@@ -296,7 +316,10 @@ export async function review(args: ReviewArgs): Promise<ReviewResult> {
     tools: [submitReviewTool],
   });
 
-  const briefing = renderBriefing(buildRepoBriefing(args.worktreePath));
+  const briefing = renderBriefing({
+    ...buildRepoBriefing(args.worktreePath),
+    graphAvailable: args.graphPath !== undefined,
+  });
   const patch = diffPatch(args.worktreePath, args.baseSha);
   const abortController = new AbortController();
   const options: Options = {
@@ -308,7 +331,10 @@ export async function review(args: ReviewArgs): Promise<ReviewResult> {
     maxTurns: 15,
     abortController,
     disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash"],
-    mcpServers: { reviewer: reviewerServer },
+    mcpServers: {
+      reviewer: reviewerServer,
+      ...(args.graphPath ? { graphify: graphifyMcpServer(args.graphPath) } : {}),
+    },
   };
 
   const q = query({ prompt: buildReviewerPrompt(args, briefing, patch), options });
@@ -382,6 +408,11 @@ export interface DiagnoseArgs {
    *  hint (`retry_with_hint`) point a respawned worker toward the preferred
    *  approach, not just away from the one that just failed. */
   profile?: ProfileEntry[];
+  /** Path to a graphify graph.json for this repo, if one is available — see
+   *  `ReviewArgs.graphPath`. Lets the diagnoser check whether a failure's
+   *  root cause is actually elsewhere in the call graph, not just in the
+   *  files the failed attempt itself touched. */
+  graphPath?: string;
 }
 
 export interface DiagnoseResult {
@@ -411,23 +442,34 @@ function renderFailureDetail(args: DiagnoseArgs): string {
   return `The run ended without completing (${args.exitReason ?? "unknown reason"}), and no more specific detail was captured.`;
 }
 
-const DIAGNOSER_INSTRUCTIONS =
-  "A task attempt just failed. Classify why, using only the evidence given — you may Read/Grep " +
-  "the repo for context but the failure already happened in a worktree you are not looking at.\n" +
-  "class: 'flaky' — looks like bad luck (e.g. a timing-dependent test, a transient network " +
-  "error in a check) rather than anything wrong with the approach.\n" +
-  "class: 'bug' — the approach was reasonable but has a real, fixable defect.\n" +
-  "class: 'spec' — the task's own intent or acceptance checks are unclear, contradictory, or " +
-  "ask for something that conflicts with the repo as it actually is. More attempts at THIS " +
-  "task cannot fix a broken spec.\n" +
-  "class: 'env' — the failure is about the environment/tooling (missing dependency, wrong " +
-  "path, platform mismatch), not the code change itself.\n" +
-  "nextAction: 'retry' for flaky (no hint needed, just try again). 'retry_with_hint' for a bug " +
-  "you can name a concrete different approach for. 'respawn' when you're not confident enough " +
-  "to give a specific hint but another attempt is still worth it. 'escalate' for 'spec' or a " +
-  "'bug'/'env' problem too deep for another attempt to plausibly fix on its own — a person " +
-  "should look. 'abandon' only when this task cannot succeed at all as written.\n" +
-  "Call submit_diagnosis exactly once.";
+/** A function, not a constant — same reason as `reviewerInstructions`: only
+ *  name the graphify tools when this session actually has them. */
+function diagnoserInstructions(graphAvailable: boolean): string {
+  return (
+    "A task attempt just failed. Classify why, using only the evidence given — you may Read/Grep " +
+    "the repo for context but the failure already happened in a worktree you are not looking at.\n" +
+    "class: 'flaky' — looks like bad luck (e.g. a timing-dependent test, a transient network " +
+    "error in a check) rather than anything wrong with the approach.\n" +
+    "class: 'bug' — the approach was reasonable but has a real, fixable defect.\n" +
+    "class: 'spec' — the task's own intent or acceptance checks are unclear, contradictory, or " +
+    "ask for something that conflicts with the repo as it actually is. More attempts at THIS " +
+    "task cannot fix a broken spec.\n" +
+    "class: 'env' — the failure is about the environment/tooling (missing dependency, wrong " +
+    "path, platform mismatch), not the code change itself.\n" +
+    (graphAvailable
+      ? "Before classifying, consider using the graphify MCP tools (shortest_path, get_neighbors) " +
+        "to check whether the real cause sits outside the files this attempt touched — e.g. a " +
+        "failing check that depends on a function this attempt never edited points at 'bug' in " +
+        "that other function or 'spec' in the task, not at this attempt's own diff.\n"
+      : "") +
+    "nextAction: 'retry' for flaky (no hint needed, just try again). 'retry_with_hint' for a bug " +
+    "you can name a concrete different approach for. 'respawn' when you're not confident enough " +
+    "to give a specific hint but another attempt is still worth it. 'escalate' for 'spec' or a " +
+    "'bug'/'env' problem too deep for another attempt to plausibly fix on its own — a person " +
+    "should look. 'abandon' only when this task cannot succeed at all as written.\n" +
+    "Call submit_diagnosis exactly once."
+  );
+}
 
 export function buildDiagnoserPrompt(args: DiagnoseArgs, briefing: string): string {
   return [
@@ -437,7 +479,7 @@ export function buildDiagnoserPrompt(args: DiagnoseArgs, briefing: string): stri
     `Intent: ${args.intent}`,
     renderFailureDetail(args),
     args.ruledOut.length > 0 ? `Already ruled out in earlier attempts:\n${args.ruledOut.map((r) => `- ${r}`).join("\n")}` : "",
-    DIAGNOSER_INSTRUCTIONS,
+    diagnoserInstructions(args.graphPath !== undefined),
   ]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
@@ -465,7 +507,10 @@ export async function diagnose(args: DiagnoseArgs): Promise<DiagnoseResult> {
     tools: [submitDiagnosisTool],
   });
 
-  const briefing = renderBriefing(buildRepoBriefing(args.worktreePath));
+  const briefing = renderBriefing({
+    ...buildRepoBriefing(args.worktreePath),
+    graphAvailable: args.graphPath !== undefined,
+  });
   const abortController = new AbortController();
   const options: Options = {
     cwd: args.worktreePath,
@@ -476,7 +521,10 @@ export async function diagnose(args: DiagnoseArgs): Promise<DiagnoseResult> {
     maxTurns: 10,
     abortController,
     disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash"],
-    mcpServers: { diagnoser: diagnoserServer },
+    mcpServers: {
+      diagnoser: diagnoserServer,
+      ...(args.graphPath ? { graphify: graphifyMcpServer(args.graphPath) } : {}),
+    },
   };
 
   const q = query({ prompt: buildDiagnoserPrompt(args, briefing), options });

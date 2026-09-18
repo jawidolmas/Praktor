@@ -39,6 +39,7 @@ import {
   commitAll,
   createWorktree,
   diagnose,
+  ensureGraphForRepo,
   foldIntoIntegrationBranch,
   removeWorktree,
   renderCheckpointNote,
@@ -46,6 +47,7 @@ import {
   review,
   runAcceptance,
   runWorker,
+  type EnsureGraphResult,
   type RunWorkerResult,
   type VerifyOutcome,
   type WorktreeHandle,
@@ -199,6 +201,10 @@ interface AttemptOutcome {
   worktree: WorktreeHandle;
   runId: string;
   result: RunWorkerResult;
+  /** Computed once per attempt slot in `runAttempt` (repo-scoped, not
+   *  worktree-scoped) and passed back so `driveTask`'s later review/diagnose
+   *  calls can reuse it instead of shelling out to `graphify update` again. */
+  graph: EnsureGraphResult;
 }
 
 /**
@@ -229,6 +235,22 @@ async function runAttempt(
     branch,
     baseRef,
   });
+
+  // graphify reflects the repo, not this attempt's worktree — built/refreshed
+  // once per attempt slot (its own `graphify update` is incremental and cheap
+  // on repeat calls, so no bespoke caching is needed here) rather than inside
+  // the rate-limit retry loop below, which reuses this same worktree.
+  const graph = ensureGraphForRepo(objective.repoPath);
+  if (!graph.available) {
+    appendEvent(db, {
+      objectiveId: objective.id,
+      taskId: task.id,
+      payload: {
+        type: "graphify.unavailable",
+        detail: graph.error ?? "graphify graph not available for this repo",
+      },
+    });
+  }
 
   // Fetched once per attempt slot, not per rate-limited retry inside the
   // loop below — a standing profile doesn't change mid-attempt, and this
@@ -281,6 +303,7 @@ async function runAttempt(
       model: task.model,
       effort: task.effort as EffortLevel,
       budget: task.budget,
+      ...(graph.available ? { graphPath: graph.graphPath } : {}),
       prompt: {
         intent: task.intent,
         ruledOut,
@@ -434,7 +457,7 @@ async function runAttempt(
       continue;
     }
 
-    return { worktree, runId, result };
+    return { worktree, runId, result, graph };
   }
 }
 
@@ -464,7 +487,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
   for (let attempt = task.attempts + 1; attempt <= task.maxAttempts; attempt++) {
     console.log(`[${objective.id.slice(0, 8)}] attempt ${attempt}/${task.maxAttempts} starting`);
 
-    const { worktree, runId, result } = await runAttempt(db, task, objective, attempt, ruledOut, checkpointNote);
+    const { worktree, runId, result, graph } = await runAttempt(db, task, objective, attempt, ruledOut, checkpointNote);
     lastWorktree = worktree;
 
     // Persisted only once the attempt has a real, concluded outcome — not
@@ -527,6 +550,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
           verify,
           model: task.model,
           profile,
+          ...(graph.available ? { graphPath: graph.graphPath } : {}),
         });
         reviewOutcome = reviewResult.review;
         appendEvent(db, {
@@ -648,6 +672,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
         ...(result.stallSignal !== undefined ? { stallSignal: result.stallSignal } : {}),
         ...(verify !== undefined ? { verify } : {}),
         ...(reviewOutcome !== undefined ? { review: reviewOutcome } : {}),
+        ...(graph.available ? { graphPath: graph.graphPath } : {}),
       });
       diagnosis = diagnoseResult.diagnosis;
       appendEvent(db, {

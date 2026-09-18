@@ -220,6 +220,16 @@ const Note = z.object({
   message: z.string(),
 });
 
+/** graphify (the knowledge-graph MCP tool handed to every worker) was not
+ *  available for this attempt's repo — either not installed at all, or its
+ *  build failed for this specific repo. The worker still ran, without the
+ *  graphify MCP server, so this is informational rather than a task failure
+ *  in itself; see `ensureGraphForRepo` in packages/worker/src/graphify.ts. */
+const GraphifyUnavailable = z.object({
+  type: z.literal("graphify.unavailable"),
+  detail: z.string(),
+});
+
 /** A human reviewed the diff and merged it into the real repo — the one
  *  event type in this log written by a person's decision rather than by the
  *  worker or the supervisor's own control flow. */
@@ -257,6 +267,7 @@ export const EventPayloadSchema = z.discriminatedUnion("type", [
   ProgressReported,
   Note,
   ObjectiveApproved,
+  GraphifyUnavailable,
 ]);
 export type EventPayload = z.infer<typeof EventPayloadSchema>;
 export type EventType = EventPayload["type"];

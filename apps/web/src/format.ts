@@ -130,5 +130,8 @@ export function describeEvent(payload: EventPayload): EventDisplay {
         kind: "success",
         text: `Approved and merged ${payload.branch} into ${payload.baseRef} by ${payload.approvedBy}${payload.pushed ? " (pushed)" : " (local only — push failed or no remote)"}`,
       };
+
+    case "graphify.unavailable":
+      return { kind: "warn", text: `graphify unavailable: ${truncate(payload.detail, 200)}` };
   }
 }

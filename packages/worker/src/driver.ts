@@ -36,6 +36,7 @@ import {
 import { churn } from "./worktree.js";
 import { buildRepoBriefing, renderBriefing } from "./briefing.js";
 import { renderEngineeringProfile, type ProfileEntry } from "./profile.js";
+import { graphifyMcpServer } from "./graphify.js";
 
 /**
  * The worker driver: the one place that talks to the Claude Agent SDK.
@@ -100,6 +101,24 @@ export function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
   return parts.join("\n");
 }
 
+/**
+ * The worker's MCP server map: the in-process `exec` server always, plus a
+ * `graphify` stdio server when a graph is available for this repo. Pulled out
+ * as a pure function — rather than left inline in `runWorker`'s `Options` —
+ * so it is testable the same low-mocking way `buildPrompt` already is,
+ * without introducing this codebase's first mock of the Agent SDK.
+ */
+export function buildMcpServers(
+  supervisorServer: ReturnType<typeof createSupervisorTools>,
+  graphPath?: string,
+): NonNullable<Options["mcpServers"]> {
+  const servers: NonNullable<Options["mcpServers"]> = { exec: supervisorServer };
+  if (graphPath) {
+    servers["graphify"] = graphifyMcpServer(graphPath);
+  }
+  return servers;
+}
+
 const toTokenUsage = (u: {
   input_tokens: number | null;
   output_tokens: number | null;
@@ -125,6 +144,12 @@ export interface RunWorkerArgs {
   contextWindow?: number;
   onEvent: (payload: EventPayload) => void;
   supervisorCallbacks: SupervisorToolCallbacks;
+  /** Path to a graphify graph.json for this repo, if `ensureGraphForRepo`
+   *  (called by the daemon, which owns the repo path — this package stays
+   *  agnostic to where it comes from) produced one. Wires up a second MCP
+   *  server and steers the briefing toward it; omitted entirely when absent,
+   *  so a worker with no graph behaves exactly as it did before this existed. */
+  graphPath?: string;
 }
 
 export interface RunWorkerResult {
@@ -234,7 +259,7 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
     maxTurns: args.budget.maxTurns,
     permissionMode: "default",
     abortController,
-    mcpServers: { exec: supervisorServer },
+    mcpServers: buildMcpServers(supervisorServer, args.graphPath),
     hooks: {
       PreToolUse: [
         {
@@ -272,7 +297,10 @@ export async function runWorker(args: RunWorkerArgs): Promise<RunWorkerResult> {
   };
 
   const startedAt = Date.now();
-  const briefing = renderBriefing(buildRepoBriefing(args.cwd));
+  const briefing = renderBriefing({
+    ...buildRepoBriefing(args.cwd),
+    graphAvailable: args.graphPath !== undefined,
+  });
   const q = query({ prompt: buildPrompt(args.prompt, briefing), options });
 
   // Set once we decide to stop (stall or rate limit). After that we stop

@@ -65,4 +65,22 @@ describe("renderBriefing", () => {
     );
     expect(text).toMatch(/This repo is not the app source\./);
   });
+
+  it("steers the worker toward graphify's MCP tools when a graph is available", () => {
+    const text = renderBriefing({ ...buildBriefingFromInput({ trackedFiles: [], readDoc: noop }), graphAvailable: true });
+    expect(text).toContain("query_graph");
+    expect(text).toContain("shortest_path");
+  });
+
+  it("omits the graphify paragraph when no graph is available", () => {
+    const text = renderBriefing(
+      buildBriefingFromInput({ trackedFiles: ["README.md"], readDoc: () => "content" }),
+    );
+    expect(text).not.toContain("query_graph");
+  });
+
+  it("still renders the graphify paragraph even with nothing else in the briefing", () => {
+    const text = renderBriefing({ ...buildBriefingFromInput({ trackedFiles: [], readDoc: noop }), graphAvailable: true });
+    expect(text).not.toBe("");
+  });
 });

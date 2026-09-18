@@ -51,6 +51,9 @@ export function formatLiveLine(payload: EventPayload): string | undefined {
     case "ratelimit.hit":
       return "  [rate limited] pausing this attempt";
 
+    case "graphify.unavailable":
+      return `  [graphify unavailable] ${truncate(payload.detail, 200)}`;
+
     default:
       return undefined;
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildPrompt } from "./driver.js";
+import { buildMcpServers, buildPrompt } from "./driver.js";
+import { createSupervisorTools } from "./tools.js";
 
 /**
  * Regression test for a real failure: a worker asked to "ask me a question
@@ -39,5 +40,27 @@ describe("buildPrompt", () => {
   it("omits the profile section entirely when none is given", () => {
     const prompt = buildPrompt({ intent: "Do something", ruledOut: [] }, "");
     expect(prompt).not.toContain("Standing engineering profile");
+  });
+});
+
+describe("buildMcpServers", () => {
+  const supervisorServer = createSupervisorTools({
+    requestDecision: async () => ({ outcome: "timed_out" as const, decisionKey: "n/a" }),
+    reportProgress: () => {},
+    recordFinding: () => {},
+    loadPolicies: () => [],
+  });
+
+  it("wires up only the exec server when no graph is available", () => {
+    const servers = buildMcpServers(supervisorServer);
+    expect(servers).toEqual({ exec: supervisorServer });
+  });
+
+  it("adds a graphify stdio MCP server pointed at the graph when one is given", () => {
+    const servers = buildMcpServers(supervisorServer, "/repo-cache/graph.json");
+    expect(servers).toEqual({
+      exec: supervisorServer,
+      graphify: { command: "graphify-mcp", args: ["/repo-cache/graph.json"] },
+    });
   });
 });

@@ -111,6 +111,77 @@ function renderTasks(tasks, runs) {
     .join("");
 }
 
+// Same reasoning as renderReports' guard below: this only changes when a new
+// attempt rebuilds the graph, so an unconditional re-render on every
+// event-triggered poll would re-snap the confidence bar's width transition
+// for no reason.
+let lastGraphKey;
+
+function confidenceSegment(cls, label, count, total) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  const width = total > 0 ? (count / total) * 100 : 0;
+  return {
+    seg: `<div class="confidence-seg ${cls}" style="width:${width}%"></div>`,
+    legend: `<span><span class="dot ${cls}"></span>${escapeHtml(label)} ${count.toLocaleString()} (${pct}%)</span>`,
+  };
+}
+
+function renderGraphStats(stats) {
+  const key = JSON.stringify(stats);
+  if (key === lastGraphKey) return;
+  lastGraphKey = key;
+
+  const el = document.getElementById("graph");
+  if (!stats.available) {
+    el.innerHTML =
+      '<div class="empty">No knowledge graph yet for this repo — built automatically before the next attempt runs.</div>';
+    return;
+  }
+
+  const c = stats.confidence;
+  const totalEdges = c.extracted + c.inferred + c.ambiguous;
+  const extracted = confidenceSegment("extracted", "Extracted", c.extracted, totalEdges);
+  const inferred = confidenceSegment("inferred", "Inferred", c.inferred, totalEdges);
+  const ambiguous = confidenceSegment("ambiguous", "Ambiguous", c.ambiguous, totalEdges);
+
+  const maxDegree = Math.max(...stats.topNodes.map((n) => n.degree), 1);
+  const topNodesHtml = stats.topNodes.length
+    ? `<div class="model-cost-list">
+        ${stats.topNodes
+          .map(
+            (n) => `
+          <div class="model-cost-row">
+            <div class="model-cost-head">
+              <span class="mono">${escapeHtml(n.label)}</span>
+              ${n.sourceFile ? `<span class="muted">${escapeHtml(n.sourceFile)}</span>` : ""}
+              <span class="model-cost-value">${n.degree.toLocaleString()}</span>
+            </div>
+            <div class="model-cost-track"><div class="model-cost-fill" style="width:${(n.degree / maxDegree) * 100}%"></div></div>
+          </div>`,
+          )
+          .join("")}
+      </div>`
+    : '<div class="empty">No connections yet.</div>';
+
+  el.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="kpi-label">Nodes</div><div class="kpi-value">${stats.nodeCount.toLocaleString()}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Edges</div><div class="kpi-value">${stats.edgeCount.toLocaleString()}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Communities</div><div class="kpi-value">${stats.communityCount.toLocaleString()}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Files</div><div class="kpi-value">${stats.fileCount.toLocaleString()}</div></div>
+    </div>
+    <div style="padding: 0 18px 16px;">
+      <div class="confidence-bar">${extracted.seg}${inferred.seg}${ambiguous.seg}</div>
+      <div class="confidence-legend">${extracted.legend}${inferred.legend}${ambiguous.legend}</div>
+    </div>
+    ${topNodesHtml}
+    <div class="stat-row">
+      <div class="stat"><span class="label">Updated</span><span class="value">${timeAgo(stats.builtAt)}</span></div>
+      <div class="stat"><span class="label">Cache</span><span class="value mono">${escapeHtml(stats.graphPath)}</span></div>
+    </div>
+  `;
+}
+
 /** The rich prose report artifact — full judge reasoning, full diagnosis,
  *  failing-check output — kept separate from the pipeline cards above
  *  (which show the structured, at-a-glance verdict) since this is the
@@ -321,13 +392,15 @@ async function refreshApproval() {
 }
 
 async function refreshDetail() {
-  const [detail, reports] = await Promise.all([
+  const [detail, reports, graph] = await Promise.all([
     fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}`),
     fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/reports`),
+    fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/graph`),
   ]);
   renderHeader(detail.objective);
   renderTasks(detail.tasks, detail.runs);
   renderReports(reports, detail.tasks);
+  renderGraphStats(graph);
   renderDecisions(detail.decisions);
   await refreshApproval();
 }

@@ -9,6 +9,7 @@ import {
   getApprovalStatus,
   getCostRollup,
   getDaemonStatus,
+  getGraphStats,
   getHealthSnapshot,
   getObjective,
   getObjectiveEvents,
@@ -224,6 +225,12 @@ export function createDashboardServer(db: Db) {
       const reportsMatch = path.match(/^\/api\/objectives\/([^/]+)\/reports$/);
       if (reportsMatch?.[1]) {
         return sendJson(res, 200, getReports(db, reportsMatch[1]));
+      }
+
+      const graphMatch = path.match(/^\/api\/objectives\/([^/]+)\/graph$/);
+      if (graphMatch?.[1]) {
+        const stats = getGraphStats(db, graphMatch[1]);
+        return stats ? sendJson(res, 200, stats) : sendJson(res, 404, { error: "not found" });
       }
 
       if (path.startsWith("/api/")) {

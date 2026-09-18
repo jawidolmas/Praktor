@@ -30,6 +30,26 @@ describe("buildReviewerPrompt", () => {
     expect(prompt).toContain("Dependencies: Avoid unnecessary dependencies.");
     expect(prompt).toContain("diff --git a/x b/x");
   });
+
+  it("tells the judge to check blast radius with graphify tools when a graph is available", () => {
+    const withGraph = buildReviewerPrompt(
+      {
+        taskTitle: "T", intent: "do it", worktreePath: "/tmp/wt", baseSha: "abc", model: "m",
+        verify: { passed: true, checks: [] },
+        graphPath: "/graphs/abc/graph.json",
+      },
+      "",
+      "",
+    );
+    expect(withGraph).toContain("shortest_path");
+
+    const withoutGraph = buildReviewerPrompt(
+      { taskTitle: "T", intent: "do it", worktreePath: "/tmp/wt", baseSha: "abc", model: "m", verify: { passed: true, checks: [] } },
+      "",
+      "",
+    );
+    expect(withoutGraph).not.toContain("shortest_path");
+  });
 });
 
 describe("buildDiagnoserPrompt", () => {
@@ -44,5 +64,23 @@ describe("buildDiagnoserPrompt", () => {
     );
     expect(prompt).toContain("Dependencies: Avoid unnecessary dependencies.");
     expect(prompt).toContain("no_churn");
+  });
+
+  it("tells the diagnoser to check outside the attempt's own diff with graphify tools when available", () => {
+    const withGraph = buildDiagnoserPrompt(
+      {
+        taskTitle: "T", intent: "do it", worktreePath: "/tmp/wt", model: "m", ruledOut: [],
+        exitReason: "error",
+        graphPath: "/graphs/abc/graph.json",
+      },
+      "",
+    );
+    expect(withGraph).toContain("get_neighbors");
+
+    const withoutGraph = buildDiagnoserPrompt(
+      { taskTitle: "T", intent: "do it", worktreePath: "/tmp/wt", model: "m", ruledOut: [], exitReason: "error" },
+      "",
+    );
+    expect(withoutGraph).not.toContain("get_neighbors");
   });
 });

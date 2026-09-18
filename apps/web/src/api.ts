@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { and, desc, eq, or } from "drizzle-orm";
 import { isEvent, type EventPayload } from "@exec/core";
 import {
@@ -28,7 +29,7 @@ import {
   type HealthApprox,
   type RecoveredTask,
 } from "@exec/db";
-import { attemptBranchName, computeApprovalDiffs, mergeAndPushAll } from "@exec/worker";
+import { attemptBranchName, computeApprovalDiffs, graphJsonPathFor, mergeAndPushAll } from "@exec/worker";
 import { describeEvent } from "./format.js";
 
 export { listObjectives };
@@ -490,6 +491,124 @@ export function getReports(db: Db, objectiveId: string): ObjectiveReports {
     }
   }
   return { objectiveReport, taskReports };
+}
+
+/* ------------------------------------------------------------------ *
+ * Knowledge graph — a summary of the per-repo graphify graph (see
+ * packages/worker/src/graphify.ts), which the worker/judge/diagnoser already
+ * have MCP access to but which was otherwise invisible outside tool-call
+ * names in the event log. This reads the daemon's already-built graph.json
+ * directly off disk — it must never shell out to `graphify` itself, only
+ * `graphJsonPathFor` (a pure path computation, no subprocess).
+ * ------------------------------------------------------------------ */
+
+export interface GraphConfidenceTally {
+  extracted: number;
+  inferred: number;
+  ambiguous: number;
+}
+
+export interface GraphTopNode {
+  label: string;
+  sourceFile?: string;
+  degree: number;
+}
+
+export interface GraphStats {
+  available: boolean;
+  repoPath: string;
+  graphPath: string;
+  nodeCount?: number;
+  edgeCount?: number;
+  communityCount?: number;
+  fileCount?: number;
+  confidence?: GraphConfidenceTally;
+  topNodes?: GraphTopNode[];
+  /** graph.json's mtime — not graphify's own `built_at_commit`, which
+   *  resolves `git HEAD` from wherever `GRAPHIFY_OUT` points; for Praktor
+   *  that's the external cache dir, not the real repo, so it isn't reliably
+   *  present. */
+  builtAt?: number;
+}
+
+const TOP_NODES_LIMIT = 8;
+
+export function getGraphStats(db: Db, objectiveId: string): GraphStats | undefined {
+  const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
+  if (!objective) return undefined;
+
+  const graphPath = graphJsonPathFor(objective.repoPath);
+  if (!existsSync(graphPath)) {
+    return { available: false, repoPath: objective.repoPath, graphPath };
+  }
+
+  let data: { nodes?: unknown; links?: unknown; edges?: unknown };
+  try {
+    data = JSON.parse(readFileSync(graphPath, "utf8"));
+  } catch {
+    // Corrupt or mid-write — treat the same as "not built yet" rather than
+    // failing the whole endpoint over a transient read.
+    return { available: false, repoPath: objective.repoPath, graphPath };
+  }
+
+  const nodes = Array.isArray(data.nodes) ? (data.nodes as Record<string, unknown>[]) : [];
+  // The default (clustered) export stores edges under "links"; only a
+  // --no-cluster export (which Praktor never requests) uses "edges" — same
+  // fallback graphify's own export.py::prune_dangling_edges applies.
+  const links = Array.isArray(data.links)
+    ? (data.links as Record<string, unknown>[])
+    : Array.isArray(data.edges)
+      ? (data.edges as Record<string, unknown>[])
+      : [];
+
+  const communities = new Set<unknown>();
+  const files = new Set<string>();
+  const nodeById = new Map<string, Record<string, unknown>>();
+  for (const node of nodes) {
+    const id = node["id"];
+    if (typeof id === "string") nodeById.set(id, node);
+    if (node["community"] !== null && node["community"] !== undefined) communities.add(node["community"]);
+    const sourceFile = node["source_file"];
+    if (typeof sourceFile === "string" && sourceFile) files.add(sourceFile);
+  }
+
+  const confidence: GraphConfidenceTally = { extracted: 0, inferred: 0, ambiguous: 0 };
+  const degree = new Map<string, number>();
+  const bump = (id: unknown) => {
+    if (typeof id !== "string") return;
+    degree.set(id, (degree.get(id) ?? 0) + 1);
+  };
+  for (const link of links) {
+    const conf = link["confidence"];
+    if (conf === "EXTRACTED" || conf === undefined) confidence.extracted += 1;
+    else if (conf === "INFERRED") confidence.inferred += 1;
+    else confidence.ambiguous += 1; // AMBIGUOUS, or anything unrecognized — needs a closer look either way
+    bump(link["source"]);
+    bump(link["target"]);
+  }
+
+  const topNodes: GraphTopNode[] = [...degree.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, TOP_NODES_LIMIT)
+    .map(([id, deg]) => {
+      const node = nodeById.get(id);
+      const label = typeof node?.["label"] === "string" ? (node["label"] as string) : id;
+      const sourceFile = typeof node?.["source_file"] === "string" ? (node["source_file"] as string) : undefined;
+      return { label, degree: deg, ...(sourceFile ? { sourceFile } : {}) };
+    });
+
+  return {
+    available: true,
+    repoPath: objective.repoPath,
+    graphPath,
+    nodeCount: nodes.length,
+    edgeCount: links.length,
+    communityCount: communities.size,
+    fileCount: files.size,
+    confidence,
+    topNodes,
+    builtAt: statSync(graphPath).mtimeMs,
+  };
 }
 
 /* ------------------------------------------------------------------ *
