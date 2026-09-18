@@ -282,7 +282,13 @@ function renderMergeResultBanner(result) {
 }
 
 async function mergeApproved() {
-  const btn = document.getElementById("mergeBtn");
+  // Not "mergeBtn" — by the time this runs (the user just clicked "Yes,
+  // merge & push"), showMergeConfirm() has already replaced that button
+  // with the confirm step, so #mergeBtn no longer exists in the DOM. Found
+  // live: referencing it here threw "Cannot set properties of null" the
+  // instant this function ran, before the request was ever sent — from the
+  // outside, clicking the real confirm button did precisely nothing.
+  const btn = document.getElementById("mergeConfirmBtn");
   const byInput = document.getElementById("approvedBy");
   const approvedBy = (byInput && byInput.value.trim()) || "dashboard";
   btn.disabled = true;

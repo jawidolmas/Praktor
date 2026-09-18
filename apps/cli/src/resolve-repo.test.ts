@@ -84,6 +84,26 @@ describe("resolveCreateTarget", () => {
     const target = resolveCreateTarget("refactor the auth module", ROOTS);
     expect(target).toBeUndefined();
   });
+
+  // Found live: this exact sentence resolved to "Desktop\website." (a
+  // literal trailing dot baked into the folder name) because the mention
+  // regex captured the sentence-ending period right along with the path.
+  it("strips a trailing sentence-ending period instead of folding it into the folder name", () => {
+    const target = resolveCreateTarget(
+      "I want you to build it in a folder in Desktop/website. the website should be about a coffee shop",
+      ROOTS,
+    );
+    expect(target).toBe(join("C:\\Users\\dev\\Desktop", "website"));
+  });
+
+  it("strips other trailing sentence punctuation the same way", () => {
+    expect(resolveCreateTarget("put it in Desktop/website, then tell me", ROOTS)).toBe(
+      join("C:\\Users\\dev\\Desktop", "website"),
+    );
+    expect(resolveCreateTarget("build it in Desktop/website!", ROOTS)).toBe(
+      join("C:\\Users\\dev\\Desktop", "website"),
+    );
+  });
 });
 
 describe("createRepoAt", () => {

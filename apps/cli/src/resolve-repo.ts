@@ -63,14 +63,22 @@ const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, 
  * "Desktop/website" or "~/Desktop/website" is captured as one token instead
  * of truncating at the first slash — `resolveCreateTarget` below depends on
  * seeing the whole path, not just its first segment.
+ *
+ * Trailing `.,;:!?` are stripped after capture — found live: "...in
+ * Desktop/website. the website should..." (a sentence boundary right after
+ * the mention) captured "website." with the period glued on, and that
+ * became the literal folder name `resolveCreateTarget` created. A real path
+ * never legitimately ends in one of these, so stripping them is always safe
+ * — including a genuine trailing "." (nothing meaningful ends a path in a
+ * bare dot), unlike a dot that's mid-token as part of a real extension.
  */
 function extractPrepositionalMentions(text: string): string[] {
   const pattern = /\b(?:in|into|inside|within|for|on|at|to)\s+(?:the\s+)?([A-Za-z0-9~][A-Za-z0-9._/\\:-]*)/gi;
   const mentions: string[] = [];
   for (const m of text.matchAll(pattern)) {
-    if (m[1]) mentions.push(m[1]);
+    if (m[1]) mentions.push(m[1].replace(/[.,;:!?]+$/, ""));
   }
-  return mentions;
+  return mentions.filter(Boolean);
 }
 
 export interface ResolveRepoResult {
