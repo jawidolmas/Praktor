@@ -1,6 +1,6 @@
 {
-  "version": "0.2.0",
-  "asOf": "2026-09-17",
+  "version": "0.2.1",
+  "asOf": "2026-09-18",
   "features": [
     "Plain-English intake — `exec-agent do \"...\"` resolves the repo and infers a check, or hands off to the planner",
     "Multi-task decomposition — one brain call breaks an objective into a dependency-ordered task graph",
@@ -18,9 +18,20 @@
     "Human approval gate — a diff per branch and a Merge button; nothing is ever merged automatically",
     "Full event log per objective — `exec-agent events <id>`, replayable, the actual source of truth",
     "Daemon autostart on login/reboot — with visibility in the dashboard",
-    "Dashboard attribution — which model did the work, what the judge and diagnoser decided, and who answered an escalation and through which channel"
+    "Dashboard attribution — which model did the work, what the judge and diagnoser decided, and who answered an escalation and through which channel",
+    "Local knowledge-graph tool — graphify builds a per-repo call graph with zero LLM tokens; the worker, judge, and diagnoser query it via MCP instead of re-grepping raw files on every attempt",
+    "Dashboard knowledge-graph panel — node/edge/community counts, an extracted/inferred/ambiguous confidence breakdown, and the most-connected code per objective"
   ],
   "log": [
+    {
+      "date": "2026-09-18",
+      "entries": [
+        "Released `v0.2.1` — the worker, the independent judge, and the failure diagnoser can now query a local graphify knowledge graph via MCP instead of grepping raw files, and the dashboard shows it",
+        "Gave the worker a second MCP server backed by graphify — a local, LLM-free per-repo call graph — with `query_graph`/`get_neighbors`/`shortest_path`/`god_nodes` preferred over Grep/Read for architecture questions",
+        "Gave the independent judge and the failure diagnoser the same graph access — the judge checks blast radius (a changed function breaking a caller the acceptance checks never exercise), the diagnoser checks whether a failure's real cause sits outside the attempt's own diff",
+        "Added a \"Knowledge graph\" panel to the dashboard's objective page — node/edge/community/file counts, a confidence breakdown, and the most-connected code by degree"
+      ]
+    },
     {
       "date": "2026-09-17",
       "entries": [
