@@ -537,14 +537,21 @@ if (demoSection && "IntersectionObserver" in window) {
           featuresEl.innerHTML = data.features.map((f) => "<li>" + mdCode(esc(f)) + "</li>").join("");
         }
         if (logEl && Array.isArray(data.log)) {
-          logEl.innerHTML = data.log
-            .map(
-              (day) =>
-                '<div class="statusfeed-log-day"><p class="statusfeed-log-date">' + esc(day.date) + "</p><ul>" +
-                day.entries.map((e) => "<li>" + mdCode(esc(e)) + "</li>").join("") +
-                "</ul></div>"
-            )
-            .join("");
+          // Only the most recent 3 update days ship in the terminal feed —
+          // data.log itself is trimmed to match (see status.json), so this
+          // slice is a display-time guarantee, not the only thing keeping it
+          // short. GitHub Releases is the actual full history from here on.
+          const recentDays = data.log.slice(0, 3);
+          logEl.innerHTML =
+            recentDays
+              .map(
+                (day) =>
+                  '<div class="statusfeed-log-day"><p class="statusfeed-log-date">' + esc(day.date) + "</p><ul>" +
+                  day.entries.map((e) => "<li>" + mdCode(esc(e)) + "</li>").join("") +
+                  "</ul></div>"
+              )
+              .join("") +
+            '<a class="statusfeed-log-more" href="https://github.com/jawidolmas/Praktor/releases" target="_blank" rel="noopener">&rarr; Full release history on GitHub</a>';
         }
       })
       .catch(() => {

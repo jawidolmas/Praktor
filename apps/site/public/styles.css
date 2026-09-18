@@ -784,6 +784,15 @@ section { padding: 84px 0; }
 .statusfeed-log li { font-size: 12.5px; line-height: 1.55; color: var(--text-muted); padding-left: 16px; position: relative; }
 .statusfeed-log li::before { content: "+"; position: absolute; left: 0; color: var(--success); }
 
+.statusfeed-log-more {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.statusfeed-log-more:hover { text-decoration: underline; }
+
 @media (max-width: 780px) {
   .statusfeed-cols { grid-template-columns: 1fr; gap: 26px; }
   .statusfeed-bar-path { display: none; }

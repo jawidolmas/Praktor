@@ -51,26 +51,6 @@
         "Fixed \"logon\" autostart never actually launching the daemon",
         "Fixed dependent-task blindness, approve races, and native merge confirms"
       ]
-    },
-    {
-      "date": "2026-09-15",
-      "entries": [
-        "Dashboard now shows which branch failed to merge, and why — not a generic alert",
-        "Fixed the \"--mode logon|boot\" ambiguity in both the CLI's output and the dashboard",
-        "Fixed a 1.4s blocking call on the dashboard's hottest endpoint",
-        "Fixed multi-task objectives only merging one branch on approve"
-      ]
-    },
-    {
-      "date": "2026-09-12",
-      "entries": [
-        "Added daemon autostart-on-reboot, with dashboard visibility",
-        "Acceptance checks now run through Git's bundled bash, not cmd.exe",
-        "Worktree checkouts made immune to the host's core.autocrlf",
-        "Added an objective-level completion report instead of one task's story",
-        "Fixed abandon leaving unrelated sibling tasks orphaned forever",
-        "Fixed stale L3 decisions being replayed forever, ignoring later answers"
-      ]
     }
   ]
 }
