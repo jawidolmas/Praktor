@@ -39,6 +39,31 @@
 
 * { box-sizing: border-box; }
 
+/* Modern scrollbars — thin, theme-colored, and no visible track — applied
+   everywhere at once (the page itself and every internal scroll region:
+   .activity-feed, .log, .diff, .report-body) rather than styled per class.
+   Firefox reads the two `scrollbar-*` properties; Chromium/Edge/Safari read
+   the pseudo-elements. Both stay in sync with light/dark automatically since
+   they're the same custom properties the rest of the page already uses. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
 body {
   margin: 0;
   background: var(--bg);

@@ -391,17 +391,43 @@ async function refreshApproval() {
   renderApproval(status);
 }
 
+// Promise.all previously meant one failing fetch (e.g. the repo's graph.json
+// being briefly mid-write, or any other single endpoint hiccup) blocked
+// every panel on the page from ever rendering, including ones with no
+// dependency on the failing endpoint — every panel just sat on its static
+// "Loading…" forever, with no error surfaced anywhere. Promise.allSettled
+// plus per-result handling means one endpoint's failure only ever affects
+// that one panel.
 async function refreshDetail() {
-  const [detail, reports, graph] = await Promise.all([
+  const [detailResult, reportsResult, graphResult] = await Promise.allSettled([
     fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}`),
     fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/reports`),
     fetchJSON(`/api/objectives/${encodeURIComponent(objectiveId)}/graph`),
   ]);
-  renderHeader(detail.objective);
-  renderTasks(detail.tasks, detail.runs);
-  renderReports(reports, detail.tasks);
-  renderGraphStats(graph);
-  renderDecisions(detail.decisions);
+
+  if (detailResult.status === "fulfilled") {
+    const detail = detailResult.value;
+    renderHeader(detail.objective);
+    renderTasks(detail.tasks, detail.runs);
+    renderDecisions(detail.decisions);
+    if (reportsResult.status === "fulfilled") {
+      renderReports(reportsResult.value, detail.tasks);
+    } else {
+      console.error("Failed to load reports:", reportsResult.reason);
+    }
+  } else {
+    console.error("Failed to load objective detail:", detailResult.reason);
+    document.getElementById("headerPanel").innerHTML =
+      '<div class="empty">Could not load this objective — check the dashboard server log, then reload.</div>';
+  }
+
+  if (graphResult.status === "fulfilled") {
+    renderGraphStats(graphResult.value);
+  } else {
+    console.error("Failed to load graph stats:", graphResult.reason);
+    renderGraphStats({ available: false });
+  }
+
   await refreshApproval();
 }
 

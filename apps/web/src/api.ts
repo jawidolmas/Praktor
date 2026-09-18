@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { and, desc, eq, or } from "drizzle-orm";
 import { isEvent, type EventPayload } from "@exec/core";
 import {
@@ -533,82 +533,109 @@ export interface GraphStats {
 
 const TOP_NODES_LIMIT = 8;
 
+// Above this, reading and computing stats over graph.json synchronously
+// would block the dashboard's single-threaded event loop for however long a
+// huge file takes to parse and scan — stalling every other concurrent
+// request (other tabs, SSE streams, decision answers), the same class of
+// problem `getDaemonStatus`'s autostart cache exists to avoid. A graph this
+// large is also not something the KPI/top-8 summary below needs to prove —
+// reporting "not available" is honest and keeps the endpoint fast.
+const GRAPH_JSON_SIZE_CAP_BYTES = 64 * 1024 * 1024;
+
+const unavailable = (repoPath: string, graphPath: string): GraphStats => ({
+  available: false,
+  repoPath,
+  graphPath,
+});
+
 export function getGraphStats(db: Db, objectiveId: string): GraphStats | undefined {
   const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
   if (!objective) return undefined;
 
   const graphPath = graphJsonPathFor(objective.repoPath);
-  if (!existsSync(graphPath)) {
-    return { available: false, repoPath: objective.repoPath, graphPath };
-  }
 
-  let data: { nodes?: unknown; links?: unknown; edges?: unknown };
+  // Everything below reads a file the daemon (a separate process) may be
+  // rewriting concurrently, and assumes a shape this endpoint doesn't
+  // control — graphify's own schema, on a real repo this was never tested
+  // against end to end. One try/catch around all of it, not just the parse,
+  // so any surprise here degrades to "not available" instead of a 500 that
+  // (before this fix) took every other panel on the page down with it via
+  // objective.js's Promise.all.
   try {
-    data = JSON.parse(readFileSync(graphPath, "utf8"));
+    const stat = statSync(graphPath);
+    if (stat.size > GRAPH_JSON_SIZE_CAP_BYTES) {
+      return unavailable(objective.repoPath, graphPath);
+    }
+
+    const data = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      nodes?: unknown;
+      links?: unknown;
+      edges?: unknown;
+    };
+
+    const nodes = Array.isArray(data.nodes) ? (data.nodes as Record<string, unknown>[]) : [];
+    // The default (clustered) export stores edges under "links"; only a
+    // --no-cluster export (which Praktor never requests) uses "edges" — same
+    // fallback graphify's own export.py::prune_dangling_edges applies.
+    const links = Array.isArray(data.links)
+      ? (data.links as Record<string, unknown>[])
+      : Array.isArray(data.edges)
+        ? (data.edges as Record<string, unknown>[])
+        : [];
+
+    const communities = new Set<unknown>();
+    const files = new Set<string>();
+    const nodeById = new Map<string, Record<string, unknown>>();
+    for (const node of nodes) {
+      const id = node["id"];
+      if (typeof id === "string") nodeById.set(id, node);
+      if (node["community"] !== null && node["community"] !== undefined) communities.add(node["community"]);
+      const sourceFile = node["source_file"];
+      if (typeof sourceFile === "string" && sourceFile) files.add(sourceFile);
+    }
+
+    const confidence: GraphConfidenceTally = { extracted: 0, inferred: 0, ambiguous: 0 };
+    const degree = new Map<string, number>();
+    const bump = (id: unknown) => {
+      if (typeof id !== "string") return;
+      degree.set(id, (degree.get(id) ?? 0) + 1);
+    };
+    for (const link of links) {
+      const conf = link["confidence"];
+      if (conf === "EXTRACTED" || conf === undefined) confidence.extracted += 1;
+      else if (conf === "INFERRED") confidence.inferred += 1;
+      else confidence.ambiguous += 1; // AMBIGUOUS, or anything unrecognized — needs a closer look either way
+      bump(link["source"]);
+      bump(link["target"]);
+    }
+
+    const topNodes: GraphTopNode[] = [...degree.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, TOP_NODES_LIMIT)
+      .map(([id, deg]) => {
+        const node = nodeById.get(id);
+        const label = typeof node?.["label"] === "string" ? (node["label"] as string) : id;
+        const sourceFile = typeof node?.["source_file"] === "string" ? (node["source_file"] as string) : undefined;
+        return { label, degree: deg, ...(sourceFile ? { sourceFile } : {}) };
+      });
+
+    return {
+      available: true,
+      repoPath: objective.repoPath,
+      graphPath,
+      nodeCount: nodes.length,
+      edgeCount: links.length,
+      communityCount: communities.size,
+      fileCount: files.size,
+      confidence,
+      topNodes,
+      builtAt: stat.mtimeMs,
+    };
   } catch {
-    // Corrupt or mid-write — treat the same as "not built yet" rather than
-    // failing the whole endpoint over a transient read.
-    return { available: false, repoPath: objective.repoPath, graphPath };
+    // Not built yet, mid-write, corrupt, or an unexpected shape — all the
+    // same "nothing to show" state from this endpoint's point of view.
+    return unavailable(objective.repoPath, graphPath);
   }
-
-  const nodes = Array.isArray(data.nodes) ? (data.nodes as Record<string, unknown>[]) : [];
-  // The default (clustered) export stores edges under "links"; only a
-  // --no-cluster export (which Praktor never requests) uses "edges" — same
-  // fallback graphify's own export.py::prune_dangling_edges applies.
-  const links = Array.isArray(data.links)
-    ? (data.links as Record<string, unknown>[])
-    : Array.isArray(data.edges)
-      ? (data.edges as Record<string, unknown>[])
-      : [];
-
-  const communities = new Set<unknown>();
-  const files = new Set<string>();
-  const nodeById = new Map<string, Record<string, unknown>>();
-  for (const node of nodes) {
-    const id = node["id"];
-    if (typeof id === "string") nodeById.set(id, node);
-    if (node["community"] !== null && node["community"] !== undefined) communities.add(node["community"]);
-    const sourceFile = node["source_file"];
-    if (typeof sourceFile === "string" && sourceFile) files.add(sourceFile);
-  }
-
-  const confidence: GraphConfidenceTally = { extracted: 0, inferred: 0, ambiguous: 0 };
-  const degree = new Map<string, number>();
-  const bump = (id: unknown) => {
-    if (typeof id !== "string") return;
-    degree.set(id, (degree.get(id) ?? 0) + 1);
-  };
-  for (const link of links) {
-    const conf = link["confidence"];
-    if (conf === "EXTRACTED" || conf === undefined) confidence.extracted += 1;
-    else if (conf === "INFERRED") confidence.inferred += 1;
-    else confidence.ambiguous += 1; // AMBIGUOUS, or anything unrecognized — needs a closer look either way
-    bump(link["source"]);
-    bump(link["target"]);
-  }
-
-  const topNodes: GraphTopNode[] = [...degree.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, TOP_NODES_LIMIT)
-    .map(([id, deg]) => {
-      const node = nodeById.get(id);
-      const label = typeof node?.["label"] === "string" ? (node["label"] as string) : id;
-      const sourceFile = typeof node?.["source_file"] === "string" ? (node["source_file"] as string) : undefined;
-      return { label, degree: deg, ...(sourceFile ? { sourceFile } : {}) };
-    });
-
-  return {
-    available: true,
-    repoPath: objective.repoPath,
-    graphPath,
-    nodeCount: nodes.length,
-    edgeCount: links.length,
-    communityCount: communities.size,
-    fileCount: files.size,
-    confidence,
-    topNodes,
-    builtAt: statSync(graphPath).mtimeMs,
-  };
 }
 
 /* ------------------------------------------------------------------ *
