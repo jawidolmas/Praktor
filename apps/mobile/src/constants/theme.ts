@@ -1,4 +1,4 @@
-import { PlatformColor, type ColorValue } from 'react-native';
+import { DynamicColorIOS, PlatformColor, type ColorValue } from 'react-native';
 
 /**
  * iOS semantic system colors. They adapt on their own to light / dark mode,
@@ -15,7 +15,8 @@ export const C = {
   tertiaryLabel: PlatformColor('tertiaryLabel'),
   separator: PlatformColor('separator'),
   fill: PlatformColor('tertiarySystemFill'),
-  tint: PlatformColor('systemIndigo'),
+  // Praktor blue, lifted slightly in dark mode to keep its contrast on black.
+  tint: DynamicColorIOS({ light: '#066ce7', dark: '#2f8bff' }),
   blue: PlatformColor('systemBlue'),
   green: PlatformColor('systemGreen'),
   orange: PlatformColor('systemOrange'),

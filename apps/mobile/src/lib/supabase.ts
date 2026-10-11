@@ -1,3 +1,6 @@
+// Must run before supabase-js reads globalThis.crypto.
+import '@/lib/crypto-shim';
+
 import { createClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
 
@@ -17,6 +20,9 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+    // OAuth (Google) returns a one-time code that only redeems together with
+    // a secret this device alone holds — never tokens in a redirect URL.
+    flowType: 'pkce',
   },
 });
 

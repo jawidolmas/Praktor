@@ -34,7 +34,8 @@
     "dashboard": "tsx apps/web/src/index.ts",
     "site": "tsx apps/site/src/index.ts",
     "daemon": "tsx apps/daemon/src/index.ts",
-    "mobile": "npm --workspace @exec/mobile run start"
+    "mobile": "npm --workspace @exec/mobile run go",
+    "mobile:dev": "npm --workspace @exec/mobile run start"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.3.7",

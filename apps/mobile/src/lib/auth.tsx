@@ -1,6 +1,8 @@
 import type { Session } from '@supabase/supabase-js';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { supabase } from '@/lib/supabase';
@@ -70,6 +72,43 @@ export async function signInWithApple(): Promise<SignInResult> {
     if (code === 'ERR_REQUEST_CANCELED') return { ok: false, cancelled: true, message: '' };
     return { ok: false, cancelled: false, message: 'Sign in with Apple isn’t available right now.' };
   }
+}
+
+/** Where Google sends the browser back to: `praktor://auth-callback` in a
+ *  real build, `exp://<this PC>:8081/--/auth-callback` inside Expo Go. Each
+ *  must be on the Supabase project's Redirect URLs allow-list. */
+export function googleRedirectUrl(): string {
+  return Linking.createURL('auth-callback');
+}
+
+/**
+ * Sign in with Google through Supabase, inside Apple's secure sign-in sheet
+ * (ASWebAuthenticationSession): the page runs in Safari's context, never in
+ * a web view this app could read, and the callback returns straight to this
+ * app rather than through iOS's shared URL routing. PKCE (S256, see
+ * crypto-shim) binds the returned code to this device.
+ */
+export async function signInWithGoogle(): Promise<SignInResult> {
+  const redirectTo = googleRedirectUrl();
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
+  });
+  if (error || !data.url) return { ok: false, cancelled: false, message: 'Google sign-in isn’t available right now.' };
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo, { preferEphemeralSession: true });
+  if (result.type !== 'success') return { ok: false, cancelled: true, message: '' };
+
+  const { queryParams } = Linking.parse(result.url);
+  const code = typeof queryParams?.code === 'string' ? queryParams.code : undefined;
+  if (!code) {
+    const denied = queryParams?.error === 'access_denied';
+    return { ok: false, cancelled: denied, message: denied ? '' : 'Google didn’t complete the sign-in. Please try again.' };
+  }
+
+  const exchange = await supabase.auth.exchangeCodeForSession(code);
+  if (exchange.error) return { ok: false, cancelled: false, message: 'Couldn’t sign in. Check your connection and try again.' };
+  return { ok: true };
 }
 
 export async function signOut(): Promise<void> {

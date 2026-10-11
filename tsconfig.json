@@ -1,15 +1,37 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/db" },
-    { "path": "./packages/policy" },
-    { "path": "./packages/telegram" },
-    { "path": "./packages/worker" },
-    { "path": "./packages/cloud" },
-    { "path": "./apps/cli" },
-    { "path": "./apps/web" },
-    { "path": "./apps/daemon" },
-    { "path": "./apps/site" }
-  ]
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/db"
+    },
+    {
+      "path": "./packages/policy"
+    },
+    {
+      "path": "./packages/telegram"
+    },
+    {
+      "path": "./packages/worker"
+    },
+    {
+      "path": "./packages/cloud"
+    },
+    {
+      "path": "./apps/cli"
+    },
+    {
+      "path": "./apps/web"
+    },
+    {
+      "path": "./apps/daemon"
+    },
+    {
+      "path": "./apps/site"
+    }
+  ],
+  "compilerOptions": {},
+  "extends": "expo/tsconfig.base"
 }

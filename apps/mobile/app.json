@@ -8,7 +8,7 @@
     "scheme": "praktor",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.olmassystems.praktor",
       "supportsTablet": false,
       "usesAppleSignIn": true,
@@ -21,9 +21,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#5856D6",
+          "backgroundColor": "#0a0b0d",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 112
         }
       ],
       "expo-secure-store",
