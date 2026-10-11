@@ -6,6 +6,7 @@
     { "path": "./packages/policy" },
     { "path": "./packages/telegram" },
     { "path": "./packages/worker" },
+    { "path": "./packages/cloud" },
     { "path": "./apps/cli" },
     { "path": "./apps/web" },
     { "path": "./apps/daemon" },

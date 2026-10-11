@@ -1,14 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { newId } from "@exec/core";
-import { objectives, openDb, runMigrations, runs, tasks, type Db } from "@exec/db";
-import { attemptBranchName } from "@exec/worker";
-import { getAgentTree, parseNameStatusZ } from "./api.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openDb, runMigrations, type Db } from "@exec/db";
 import { createDashboardServer } from "./server.js";
 
 /**
@@ -109,86 +102,5 @@ describe("local dashboard guard", () => {
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["x-frame-options"]).toBe("DENY");
     expect(res.headers["cache-control"]).toBe("no-store");
-  });
-});
-
-describe("parseNameStatusZ", () => {
-  it("parses plain changes and renames", () => {
-    expect(parseNameStatusZ("M\0src/a.ts\0R087\0old.ts\0new.ts\0A\0b c.ts\0")).toEqual([
-      { status: "M", path: "src/a.ts" },
-      { status: "R", path: "new.ts", oldPath: "old.ts" },
-      { status: "A", path: "b c.ts" },
-    ]);
-  });
-});
-
-describe("getAgentTree", () => {
-  let repo: string;
-
-  function git(...args: string[]): void {
-    execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...args], { stdio: "ignore" });
-  }
-
-  beforeAll(() => {
-    repo = mkdtempSync(join(tmpdir(), "praktor-tree-"));
-    execFileSync("git", ["init", "-q", "-b", "main", repo]);
-    writeFileSync(join(repo, "README.md"), "hi\n");
-    git("add", ".");
-    git("commit", "-q", "-m", "init");
-  });
-
-  afterAll(() => rmSync(repo, { recursive: true, force: true }));
-
-  it("lists the attempt branch's files and what it changed", () => {
-    const objectiveId = newId();
-    const taskId = newId();
-    const budget = { maxTurns: 1, maxTokens: 1, maxWallClockMs: 1 };
-    db.insert(objectives).values({ id: objectiveId, title: "o", repoPath: repo, baseRef: "main", budget }).run();
-    db.insert(tasks)
-      .values({
-        id: taskId, objectiveId, key: "T-001", title: "add feature", intent: "x", taskClass: "implement",
-        acceptance: { checks: [] }, budget, status: "done",
-      })
-      .run();
-    db.insert(runs)
-      .values({
-        id: newId(), taskId, objectiveId, attempt: 2, sessionId: newId(), model: "m", worktreePath: "/w",
-        usage: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
-      })
-      .run();
-
-    const branch = attemptBranchName(taskId, 2);
-    git("checkout", "-q", "-b", branch);
-    writeFileSync(join(repo, "feature.ts"), "export {}\n");
-    writeFileSync(join(repo, "README.md"), "changed\n");
-    git("add", ".");
-    git("commit", "-q", "-m", "work");
-    git("checkout", "-q", "main");
-
-    const tree = getAgentTree(db, objectiveId)!;
-    expect(tree.baseRef).toBe("main");
-    expect(tree.tasks).toHaveLength(1);
-    const t = tree.tasks[0]!;
-    expect(t).toMatchObject({ available: true, attempt: 2, branch, truncated: false });
-    expect(t.files.sort()).toEqual(["README.md", "feature.ts"]);
-    expect(t.changes).toEqual(
-      expect.arrayContaining([
-        { status: "A", path: "feature.ts" },
-        { status: "M", path: "README.md" },
-      ]),
-    );
-  });
-
-  it("explains a task that never ran", () => {
-    const objectiveId = newId();
-    const budget = { maxTurns: 1, maxTokens: 1, maxWallClockMs: 1 };
-    db.insert(objectives).values({ id: objectiveId, title: "o", repoPath: repo, baseRef: "main", budget }).run();
-    db.insert(tasks)
-      .values({
-        id: newId(), objectiveId, key: "T-001", title: "t", intent: "x", taskClass: "implement",
-        acceptance: { checks: [] }, budget,
-      })
-      .run();
-    expect(getAgentTree(db, objectiveId)!.tasks[0]).toMatchObject({ available: false, files: [] });
   });
 });

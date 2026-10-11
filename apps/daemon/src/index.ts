@@ -22,6 +22,7 @@ import { attemptBranchName, removeWorktree } from "@exec/worker";
 import { applyAnsweredFailureDecisions, driveTask, worktreePathFor, worktreesDir } from "./engine.js";
 import { reclaimWorktrees } from "./gc.js";
 import { planObjective } from "./plan.js";
+import { runCloudBridge } from "./cloud-bridge.js";
 import { loadTelegramConfig, runTelegramBridge } from "./telegram-bridge.js";
 
 /**
@@ -236,6 +237,12 @@ function main(): void {
   } else {
     console.log("Telegram bridge: disabled (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable).");
   }
+
+  // Same fire-and-forget contract as the Telegram bridge: it retries
+  // forever on its own, and a broken relay must never stop task driving.
+  runCloudBridge(db).catch((err: unknown) => {
+    console.error("[cloud] bridge crashed and will not restart until the daemon does:", err);
+  });
 
   mainLoop(db).catch((err: unknown) => {
     console.error("daemon loop crashed:", err);

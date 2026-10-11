@@ -1,0 +1,118 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { execHome } from "@exec/db";
+import type { CloudConfig } from "./config.js";
+import type { CloudTable, CloudWriter } from "./sync.js";
+
+/**
+ * This machine's Supabase identity: an anonymous user that becomes a "host"
+ * once its owner claims it from the phone. Its session (a refresh token) is
+ * kept in a file under $EXEC_HOME, inside the user's own profile directory.
+ *
+ * Blast radius if that file leaks: the holder can write into this host's
+ * mirror rows and read its owner's mirror — never source code (sync level B),
+ * never anything else in the project, and revoking the host from the phone
+ * cuts it off.
+ */
+
+export function sessionPath(): string {
+  return join(execHome(), "cloud-session.json");
+}
+
+/** supabase-js storage adapter over one JSON file, written atomically
+ *  (temp file + rename) so a crash mid-write can't corrupt the session. */
+function fileStorage(path: string) {
+  const read = (): Record<string, string> => {
+    try {
+      return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  };
+  const write = (data: Record<string, string>): void => {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
+    renameSync(tmp, path);
+  };
+  return {
+    getItem: (key: string) => read()[key] ?? null,
+    setItem: (key: string, value: string) => write({ ...read(), [key]: value }),
+    removeItem: (key: string) => {
+      const data = read();
+      delete data[key];
+      write(data);
+    },
+  };
+}
+
+export function createCloudClient(config: CloudConfig, path = sessionPath()): SupabaseClient {
+  return createClient(config.url, config.key, {
+    auth: {
+      storage: fileStorage(path),
+      storageKey: "praktor-host",
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+/** Removes this machine's stored identity. The host row stays until the
+ *  owner revokes it from the phone. */
+export function forgetSession(path = sessionPath()): void {
+  rmSync(path, { force: true });
+}
+
+/** Returns this machine's user id, signing in anonymously the first time. */
+export async function ensureHostSession(client: SupabaseClient): Promise<string> {
+  const { data } = await client.auth.getSession();
+  if (data.session) return data.session.user.id;
+  const signIn = await client.auth.signInAnonymously();
+  if (signIn.error || !signIn.data.user) {
+    throw new Error(
+      `Couldn't create this PC's identity: ${signIn.error?.message ?? "no user returned"}. ` +
+        "Check that anonymous sign-ins are enabled in the Supabase project (Authentication → Sign In / Providers).",
+    );
+  }
+  return signIn.data.user.id;
+}
+
+export interface HostStatus {
+  hostId: string;
+  claimed: boolean;
+  ownerId?: string;
+  name?: string;
+  revoked: boolean;
+}
+
+export async function getHostStatus(client: SupabaseClient, hostId: string): Promise<HostStatus> {
+  const { data, error } = await client.from("hosts").select("owner_id, name, revoked_at").eq("id", hostId).maybeSingle();
+  if (error) throw new Error(`Couldn't read host status: ${error.message}`);
+  if (!data) return { hostId, claimed: false, revoked: false };
+  return { hostId, claimed: true, ownerId: data.owner_id, name: data.name, revoked: data.revoked_at !== null };
+}
+
+export async function createHostClaim(client: SupabaseClient, name: string): Promise<string> {
+  const { data, error } = await client.rpc("create_host_claim", { p_name: name });
+  if (error || typeof data !== "string") throw new Error(`Couldn't create a claim code: ${error?.message ?? "no code"}`);
+  return data;
+}
+
+/** The production CloudWriter: idempotent upserts through PostgREST, with
+ *  RLS deciding what this host may write. */
+export class SupabaseCloudWriter implements CloudWriter {
+  constructor(private readonly client: SupabaseClient) {}
+
+  async upsert(table: CloudTable, rows: object[], onConflict: string): Promise<void> {
+    if (rows.length === 0) return;
+    const { error } = await this.client.from(table).upsert(rows, { onConflict });
+    if (error) throw new Error(`${table}: ${error.message}`);
+  }
+
+  async heartbeat(): Promise<void> {
+    const { error } = await this.client.rpc("host_heartbeat");
+    if (error) throw new Error(`heartbeat: ${error.message}`);
+  }
+}

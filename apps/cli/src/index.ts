@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { answerDecision, cancelObjective, openDb, runMigrations } from "@exec/db";
 import { approveObjective } from "./approve.js";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
+import { runCloud } from "./cloud.js";
 import {
   AUTOSTART_MODE_EXPLANATIONS,
   autostartStatus,
@@ -34,6 +35,7 @@ exec-agent — supervise a single Claude Code worker on one task, end to end.
   exec-agent daemon start|stop|status
   exec-agent daemon install-autostart --mode logon    (or --mode boot)
   exec-agent daemon uninstall-autostart
+  exec-agent cloud connect|status|resync|disconnect
 
 "do" is the quick path: say what you want, name the repo somewhere in the
 sentence (it's matched against git repos under ~/Desktop — set
@@ -466,6 +468,11 @@ async function main(): Promise<void> {
 
   if (command === "abandon") {
     await runAbandon(rest);
+    return;
+  }
+
+  if (command === "cloud") {
+    await runCloud(rest);
     return;
   }
 

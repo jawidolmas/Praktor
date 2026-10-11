@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeEvent } from "./format.js";
+import { describeEvent } from "./describe.js";
 
 const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
 

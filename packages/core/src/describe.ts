@@ -1,4 +1,4 @@
-import type { EventPayload } from "@exec/core";
+import type { EventPayload } from "./events.js";
 
 /**
  * Turn an event payload into something a browser renders, for every event

@@ -3,6 +3,7 @@
   "compilerOptions": { "rootDir": "./src", "outDir": "./dist", "noEmit": true },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../../packages/cloud" },
     { "path": "../../packages/core" },
     { "path": "../../packages/db" },
     { "path": "../../packages/policy" },

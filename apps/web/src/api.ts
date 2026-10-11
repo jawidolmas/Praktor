@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { and, desc, eq, or } from "drizzle-orm";
 import { isEvent, type EventPayload } from "@exec/core";
@@ -13,6 +12,7 @@ import {
   decisions,
   events,
   findRunningDaemon,
+  getCostRollup,
   listMemories,
   listObjectives,
   markObjectiveMerged,
@@ -35,11 +35,10 @@ import {
   computeApprovalDiffs,
   graphJsonPathFor,
   mergeAndPushAll,
-  resolveBaseBranch,
 } from "@exec/worker";
-import { describeEvent } from "./format.js";
+import { describeEvent } from "@exec/core";
 
-export { listObjectives };
+export { getCostRollup, listObjectives };
 export type { ObjectiveSummary } from "@exec/db";
 
 /**
@@ -401,71 +400,6 @@ export function getHealthSnapshot(db: Db, windowMs = 7 * 24 * 60 * 60 * 1000): H
 }
 
 /* ------------------------------------------------------------------ *
- * Cost & model attribution
- * ------------------------------------------------------------------ */
-
-export interface ModelCost {
-  model: string;
-  runs: number;
-  totalCostUsd: number;
-  totalTokens: number;
-}
-
-export interface CostRollup {
-  totalCostUsd: number;
-  totalTokens: number;
-  workerCostUsd: number;
-  judgeCostUsd: number;
-  diagnoserCostUsd: number;
-  byModel: ModelCost[];
-}
-
-/** Every dollar this installation has spent, broken down by which worker
- *  model earned it and separated from what the judge and diagnoser spent
- *  independently reviewing that work — the two brain calls whose cost used
- *  to be computed and immediately discarded (see events.ts's `ReviewResult`/
- *  `DiagnoseResult`). Full table scans are fine at this tool's scale (a
- *  single operator's own run history), same tradeoff `listObjectives`
- *  already makes. */
-export function getCostRollup(db: Db): CostRollup {
-  const runRows = db.select().from(runs).all();
-  const byModel = new Map<string, ModelCost>();
-  let workerCostUsd = 0;
-  let totalTokens = 0;
-  for (const r of runRows) {
-    const tokens = r.usage.input + r.usage.output + r.usage.cacheRead + r.usage.cacheCreation;
-    workerCostUsd += r.costUsdEstimate;
-    totalTokens += tokens;
-    const entry = byModel.get(r.model) ?? { model: r.model, runs: 0, totalCostUsd: 0, totalTokens: 0 };
-    entry.runs += 1;
-    entry.totalCostUsd += r.costUsdEstimate;
-    entry.totalTokens += tokens;
-    byModel.set(r.model, entry);
-  }
-
-  let judgeCostUsd = 0;
-  let diagnoserCostUsd = 0;
-  const brainRows = db
-    .select()
-    .from(events)
-    .where(or(eq(events.type, "review.result"), eq(events.type, "diagnose.result")))
-    .all();
-  for (const row of brainRows) {
-    if (isEvent(row.payload, "review.result")) judgeCostUsd += row.payload.costUsdEstimate ?? 0;
-    if (isEvent(row.payload, "diagnose.result")) diagnoserCostUsd += row.payload.costUsdEstimate ?? 0;
-  }
-
-  return {
-    totalCostUsd: workerCostUsd + judgeCostUsd + diagnoserCostUsd,
-    totalTokens,
-    workerCostUsd,
-    judgeCostUsd,
-    diagnoserCostUsd,
-    byModel: Array.from(byModel.values()).sort((a, b) => b.totalCostUsd - a.totalCostUsd),
-  };
-}
-
-/* ------------------------------------------------------------------ *
  * Reports — the rich prose artifact (full judge reasoning, full
  * diagnosis, failed-check output) that until now only ever lived in the
  * `artifacts` table with no API route reading it back out.
@@ -687,136 +621,4 @@ export function listActivity(db: Db, limit = 80): ActivityItem[] {
       runId: row.runId,
     };
   });
-}
-
-/* ------------------------------------------------------------------ *
- * Agent tree — what each task's worker actually built, file by file
- * ------------------------------------------------------------------ */
-
-/** Hard cap on files listed per branch: enough for any real project's tree
- *  on a phone, small enough that a huge monorepo can't blow up a response. */
-const TREE_FILE_CAP = 5000;
-
-export interface TreeChange {
-  /** git's status letter: A(dded), M(odified), D(eleted), R(enamed), … */
-  status: string;
-  path: string;
-  oldPath?: string;
-}
-
-export interface TaskTree {
-  taskId: string;
-  taskKey: string;
-  taskTitle: string;
-  taskStatus: string;
-  attempt: number;
-  branch: string;
-  available: boolean;
-  reason?: string;
-  files: string[];
-  truncated: boolean;
-  changes: TreeChange[];
-}
-
-export interface AgentTree {
-  objectiveId: string;
-  baseRef: string;
-  tasks: TaskTree[];
-}
-
-/** Read-only git against the real repo. Arguments are always an array (no
- *  shell), every ref comes from the database rather than the request, and
- *  the buffer is raised above Node's 1MB default so a big tree fails over
- *  to the cap instead of throwing. */
-function gitRead(repoPath: string, args: string[]): string {
-  return execFileSync("git", ["-C", repoPath, ...args], {
-    encoding: "utf8",
-    windowsHide: true,
-    maxBuffer: 32 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-}
-
-/** Parses `git diff --name-status -z`: NUL-separated, with renames and
- *  copies carrying two paths (old, then new). */
-export function parseNameStatusZ(output: string): TreeChange[] {
-  const parts = output.split("\0").filter((p) => p.length > 0);
-  const changes: TreeChange[] = [];
-  for (let i = 0; i < parts.length; ) {
-    const code = parts[i++]!;
-    const status = code.charAt(0);
-    if (status === "R" || status === "C") {
-      const oldPath = parts[i++];
-      const path = parts[i++];
-      if (oldPath !== undefined && path !== undefined) changes.push({ status, path, oldPath });
-    } else {
-      const path = parts[i++];
-      if (path !== undefined) changes.push({ status, path });
-    }
-  }
-  return changes;
-}
-
-/** For each task, the tree of its most recent attempt's branch plus what
- *  that attempt changed against the base. Built from git objects only — no
- *  worktree directory is ever read, so a path in a request can't steer this
- *  outside the repo. */
-export function getAgentTree(db: Db, objectiveId: string): AgentTree | undefined {
-  const objective = db.select().from(objectives).where(eq(objectives.id, objectiveId)).get();
-  if (!objective) return undefined;
-
-  const taskRows = db.select().from(tasks).where(eq(tasks.objectiveId, objectiveId)).all();
-  const runRows = db.select().from(runs).where(eq(runs.objectiveId, objectiveId)).all();
-  const latestAttempt = new Map<string, number>();
-  for (const run of runRows) {
-    latestAttempt.set(run.taskId, Math.max(latestAttempt.get(run.taskId) ?? 0, run.attempt));
-  }
-
-  const base = resolveBaseBranch(objective.repoPath, objective.baseRef);
-  // A ref starting with "-" would be parsed by git as an option.
-  const baseIsSafe = !base.startsWith("-");
-
-  const result: TaskTree[] = taskRows.map((task) => {
-    const attempt = latestAttempt.get(task.id) ?? 0;
-    const branch = attempt > 0 ? attemptBranchName(task.id, attempt) : "";
-    const empty = {
-      taskId: task.id,
-      taskKey: task.key,
-      taskTitle: task.title,
-      taskStatus: task.status,
-      attempt,
-      branch,
-      files: [] as string[],
-      truncated: false,
-      changes: [] as TreeChange[],
-    };
-    if (attempt === 0) return { ...empty, available: false, reason: "No attempt has started yet." };
-    if (!baseIsSafe) return { ...empty, available: false, reason: "The objective's base ref isn't a valid branch name." };
-
-    try {
-      gitRead(objective.repoPath, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
-    } catch {
-      return { ...empty, available: false, reason: "This attempt's branch no longer exists (cleaned up or merged)." };
-    }
-
-    try {
-      const all = gitRead(objective.repoPath, ["ls-tree", "-r", "-z", "--name-only", branch])
-        .split("\0")
-        .filter((p) => p.length > 0);
-      const changes = parseNameStatusZ(
-        gitRead(objective.repoPath, ["diff", "--name-status", "-z", `${base}...${branch}`]),
-      );
-      return {
-        ...empty,
-        available: true,
-        files: all.slice(0, TREE_FILE_CAP),
-        truncated: all.length > TREE_FILE_CAP,
-        changes,
-      };
-    } catch {
-      return { ...empty, available: false, reason: "Couldn't read this branch from the repository." };
-    }
-  });
-
-  return { objectiveId, baseRef: base, tasks: result };
 }

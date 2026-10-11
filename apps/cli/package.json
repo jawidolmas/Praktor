@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@exec/cloud": "*",
     "@exec/core": "*",
     "@exec/db": "*",
     "@exec/policy": "*",
-    "@exec/worker": "*"
+    "@exec/worker": "*",
+    "qrcode": "1.5.4"
   }
 }
