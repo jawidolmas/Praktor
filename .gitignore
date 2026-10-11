@@ -18,3 +18,7 @@ dist/
 
 # Disposable demo/test repos used for manual smoke-testing the CLI
 .scratch/
+
+# Expo dev-server state and logs. Never commit: its logs record every
+# variable it loaded from .env, secrets included.
+.expo/
