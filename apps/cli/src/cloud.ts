@@ -62,7 +62,10 @@ async function connect(argv: string[]): Promise<void> {
   );
   if (!check.ok) {
     console.error(check.reason);
-    console.error("Find both in Supabase: Project Settings → API (the URL, and the publishable key).");
+    console.error("");
+    console.error("The first time, tell it which Supabase project to use (it's remembered after that):");
+    console.error("  exec-agent cloud connect --url https://<project>.supabase.co --key sb_publishable_…");
+    console.error("Both are in Supabase under Project Settings → API. Use the publishable key, never a secret one.");
     process.exitCode = 1;
     return;
   }
