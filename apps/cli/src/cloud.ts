@@ -87,8 +87,10 @@ async function connect(argv: string[]): Promise<void> {
 
   const name = (flags.get("name")?.[0] ?? hostname()).slice(0, 64);
   const code = await createHostClaim(client, name);
-  const link = `praktor://claim?code=${code}`;
-  const qr = await QRCode.toString(link, { type: "terminal", small: true, errorCorrectionLevel: "M" });
+  // Not a URL on purpose: the app accepts claim codes only from its own
+  // scanner, so a link sent by anyone else can never claim this PC.
+  const payload = `praktor-claim:v1:${code}`;
+  const qr = await QRCode.toString(payload, { type: "terminal", small: true, errorCorrectionLevel: "M" });
 
   console.log("");
   console.log(`Pair "${name}" with the Praktor app`);
