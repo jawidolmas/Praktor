@@ -2,7 +2,8 @@ import type { ColorValue } from 'react-native';
 import type { SFSymbol } from 'expo-symbols';
 
 import { C } from '@/constants/theme';
-import type { Host, Objective, ObjectiveStatus } from '@/lib/relay';
+import type { EventKind, Host, Objective, ObjectiveStatus, TaskStatus } from '@/lib/relay';
+import type { Change } from '@/lib/tree';
 
 export interface StatusLook {
   label: string;
@@ -60,4 +61,60 @@ export function hostState(h: Host, now = Date.now()): HostState {
   if (h.revoked_at) return 'revoked';
   if (!h.last_seen_at) return 'never';
   return now - Date.parse(h.last_seen_at) <= ONLINE_WITHIN_MS ? 'online' : 'offline';
+}
+
+const TASK: Record<TaskStatus, StatusLook> = {
+  pending: { label: 'Waiting', color: C.gray, symbol: 'circle.dotted' },
+  ready: { label: 'Ready', color: C.gray, symbol: 'circle' },
+  running: { label: 'Running', color: C.blue, symbol: 'bolt.circle.fill' },
+  verifying: { label: 'Verifying', color: C.purple, symbol: 'checkmark.seal' },
+  blocked: { label: 'Needs you', color: C.orange, symbol: 'exclamationmark.circle.fill' },
+  parked: { label: 'Paused', color: C.orange, symbol: 'pause.circle.fill' },
+  done: { label: 'Done', color: C.green, symbol: 'checkmark.circle.fill' },
+  failed: { label: 'Failed', color: C.red, symbol: 'xmark.circle.fill' },
+  abandoned: { label: 'Skipped', color: C.gray, symbol: 'minus.circle.fill' },
+};
+
+export function taskLook(status: TaskStatus): StatusLook {
+  return TASK[status] ?? { label: status, color: C.gray, symbol: 'circle' };
+}
+
+const EVENT: Record<EventKind, { color: ColorValue; symbol: SFSymbol }> = {
+  info: { color: C.blue, symbol: 'circle.fill' },
+  success: { color: C.green, symbol: 'checkmark.circle.fill' },
+  warn: { color: C.orange, symbol: 'exclamationmark.triangle.fill' },
+  error: { color: C.red, symbol: 'xmark.octagon.fill' },
+  muted: { color: C.gray, symbol: 'circle' },
+};
+
+export function eventLook(kind: EventKind) {
+  return EVENT[kind] ?? EVENT.info;
+}
+
+/** git's change letters as a person reads them. */
+export function changeLook(change: Change): { label: string; short: string; color: ColorValue } {
+  switch (change) {
+    case 'A':
+    case 'C':
+      return { label: 'Added', short: 'A', color: C.green };
+    case 'D':
+      return { label: 'Deleted', short: 'D', color: C.red };
+    case 'R':
+      return { label: 'Renamed', short: 'R', color: C.blue };
+    default:
+      return { label: 'Modified', short: 'M', color: C.orange };
+  }
+}
+
+export function duration(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 1) return '<1m';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+export function clockTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }

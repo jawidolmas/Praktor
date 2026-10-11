@@ -51,6 +51,156 @@ export async function fetchObjectives(): Promise<Objective[]> {
   return data as Objective[];
 }
 
+export type TaskStatus =
+  | 'pending'
+  | 'ready'
+  | 'running'
+  | 'verifying'
+  | 'blocked'
+  | 'parked'
+  | 'done'
+  | 'failed'
+  | 'abandoned';
+
+export interface Task {
+  id: string;
+  key: string;
+  title: string;
+  task_class: string;
+  status: TaskStatus;
+  attempts: number;
+  max_attempts: number;
+  depends_on: string[];
+  model: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Run {
+  id: string;
+  task_id: string;
+  attempt: number;
+  model: string;
+  status: string;
+  exit_reason: string | null;
+  turns: number;
+  cost_usd: number;
+  started_at: number;
+  ended_at: number | null;
+}
+
+export interface DecisionOption {
+  id: string;
+  label: string;
+  pros?: string[];
+  cons?: string[];
+}
+
+export interface Decision {
+  id: string;
+  key: string;
+  task_id: string | null;
+  level: string;
+  title: string;
+  context: string;
+  options: DecisionOption[];
+  recommendation: string;
+  risk: string;
+  status: string;
+  answer: string | null;
+  answered_by: string | null;
+  answered_at: number | null;
+  created_at: number;
+}
+
+export interface AgentFile {
+  task_id: string;
+  path: string;
+  attempt: number;
+  change: 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U' | 'X';
+  old_path: string | null;
+}
+
+export type EventKind = 'info' | 'success' | 'warn' | 'error' | 'muted';
+
+export interface ActivityEvent {
+  id: number;
+  host_id: string;
+  task_id: string | null;
+  ts: number;
+  type: string;
+  kind: EventKind;
+  text: string;
+  model: string | null;
+}
+
+export interface ObjectiveDetail {
+  objective: Objective;
+  tasks: Task[];
+  runs: Run[];
+  decisions: Decision[];
+  files: AgentFile[];
+}
+
+function unwrap<T>(result: { data: T | null; error: { message: string } | null }): T {
+  if (result.error) throw new Error(result.error.message);
+  return result.data as T;
+}
+
+/** Everything about one objective except its activity log, in parallel. */
+export async function fetchObjectiveDetail(id: string): Promise<ObjectiveDetail | null> {
+  const [objective, tasks, runs, decisions, files] = await Promise.all([
+    supabase
+      .from('objectives')
+      .select('id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at')
+      .eq('id', id)
+      .maybeSingle(),
+    supabase
+      .from('tasks')
+      .select('id, key, title, task_class, status, attempts, max_attempts, depends_on, model, created_at, updated_at')
+      .eq('objective_id', id)
+      .order('key'),
+    supabase
+      .from('runs')
+      .select('id, task_id, attempt, model, status, exit_reason, turns, cost_usd, started_at, ended_at')
+      .eq('objective_id', id)
+      .order('started_at'),
+    supabase
+      .from('decisions')
+      .select(
+        'id, key, task_id, level, title, context, options, recommendation, risk, status, answer, answered_by, answered_at, created_at',
+      )
+      .eq('objective_id', id)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('agent_files')
+      .select('task_id, path, attempt, change, old_path')
+      .eq('objective_id', id)
+      .limit(5000),
+  ]);
+  const o = unwrap(objective);
+  if (!o) return null;
+  return {
+    objective: o as Objective,
+    tasks: unwrap(tasks) as Task[],
+    runs: unwrap(runs) as Run[],
+    decisions: unwrap(decisions) as Decision[],
+    files: unwrap(files) as AgentFile[],
+  };
+}
+
+/** The objective's activity log, newest first. */
+export async function fetchObjectiveEvents(id: string): Promise<ActivityEvent[]> {
+  const result = await supabase
+    .from('events')
+    .select('id, host_id, task_id, ts, type, kind, text, model')
+    .eq('objective_id', id)
+    .order('ts', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(300);
+  return unwrap(result) as ActivityEvent[];
+}
+
 /** Claims the computer showing `code`. Returns the new host's id. */
 export async function claimHost(code: string): Promise<string> {
   const { data, error } = await supabase.rpc('claim_host', { p_code: code });
@@ -77,7 +227,12 @@ export interface Live<T> {
  * app misses realtime messages. Bursts of changes are coalesced so a busy
  * agent doesn't trigger a reload per event.
  */
-export function useLive<T>(key: string, tables: string[], fetcher: () => Promise<T>): Live<T> {
+/** A table to watch, optionally narrowed server-side (Realtime filter
+ *  syntax, e.g. `objective_id=eq.<id>`) so a busy table doesn't wake
+ *  screens that don't care. */
+export type Watch = string | { table: string; filter: string };
+
+export function useLive<T>(key: string, tables: Watch[], fetcher: () => Promise<T>): Live<T> {
   const [data, setData] = useState<T | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
@@ -112,8 +267,9 @@ export function useLive<T>(key: string, tables: string[], fetcher: () => Promise
     // screens watching one table would share — and tear down — each other's
     // subscription. Every hook instance gets its own.
     const channel = supabase.channel(`live:${key}:${instance}`);
-    for (const table of tables) {
-      channel.on('postgres_changes', { event: '*', schema: 'public', table }, soon);
+    for (const watch of tables) {
+      const spec = typeof watch === 'string' ? { table: watch } : watch;
+      channel.on('postgres_changes', { event: '*', schema: 'public', ...spec }, soon);
     }
     channel.subscribe();
 
@@ -126,7 +282,7 @@ export function useLive<T>(key: string, tables: string[], fetcher: () => Promise
       appState.remove();
       supabase.removeChannel(channel);
     };
-    // `tables` is a constant list at every call site; keyed by `key`.
+    // `tables` is fixed per `key` at every call site, so `key` stands in for it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, instance, load]);
 

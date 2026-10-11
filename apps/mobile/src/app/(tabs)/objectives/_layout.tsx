@@ -10,6 +10,7 @@ export default function ObjectivesLayout() {
         headerLargeTitleShadowVisible: false,
       }}>
       <Stack.Screen name="index" options={{ title: 'Objectives' }} />
+      <Stack.Screen name="[id]" options={{ headerLargeTitle: false, headerBackTitle: 'Objectives' }} />
     </Stack>
   );
 }

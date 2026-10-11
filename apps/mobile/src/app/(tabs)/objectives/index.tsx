@@ -1,8 +1,9 @@
 import SegmentedControl from '@react-native-segmented-control/segmented-control';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { EmptyState, PrimaryButton, Section, StatusPill } from '@/components/ui';
 import { C, Space, Type } from '@/constants/theme';
@@ -24,10 +25,18 @@ const EMPTY: Record<ObjectiveGroup, { title: string; message: string }> = {
 function ObjectiveRow({ o, computer }: { o: Objective; computer?: string }) {
   const look = objectiveLook(o);
   return (
-    <View style={styles.row} accessible accessibilityLabel={`${o.title}. ${look.label}. ${o.repo_name}.`}>
+    <Pressable
+      onPress={() => router.push({ pathname: '/objectives/[id]', params: { id: o.id } })}
+      accessibilityRole="button"
+      accessibilityLabel={`${o.title}. ${look.label}. ${o.repo_name}.`}
+      accessibilityHint="Shows tasks, files and activity"
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: C.cardPressed }]}>
       <View style={styles.rowTop}>
         <StatusPill look={look} />
-        <Text style={styles.time}>{timeAgo(o.updated_at)}</Text>
+        <View style={styles.rowTrail}>
+          <Text style={styles.time}>{timeAgo(o.updated_at)}</Text>
+          <SymbolView name="chevron.right" size={12} tintColor={C.tertiaryLabel} weight="semibold" />
+        </View>
       </View>
       <Text style={styles.title} numberOfLines={2}>
         {o.title}
@@ -35,7 +44,7 @@ function ObjectiveRow({ o, computer }: { o: Objective; computer?: string }) {
       <Text style={styles.meta} numberOfLines={1}>
         {[computer, o.repo_name, o.model.replace(/^claude-/, ''), money(o.cost_usd)].filter(Boolean).join(' · ')}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -117,6 +126,7 @@ const styles = StyleSheet.create({
   segments: { marginHorizontal: Space.l, marginTop: Space.s },
   row: { paddingHorizontal: Space.l, paddingVertical: Space.m + 2, gap: 4 },
   rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rowTrail: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   time: { ...Type.footnote, color: C.tertiaryLabel },
   title: { ...Type.headline, color: C.label },
   meta: { ...Type.subheadline, color: C.secondaryLabel },
