@@ -22,6 +22,7 @@
     <button class="tab-btn" data-tab="health">Health &amp; recovery</button>
     <button class="tab-btn" data-tab="cost">Cost &amp; models</button>
     <button class="tab-btn" data-tab="governance">Policies &amp; profile</button>
+    <button class="tab-btn" data-tab="devices">Devices</button>
   </nav>
 
   <main>
@@ -131,10 +132,28 @@
       </section>
     </section>
 
+    <!-- ============================== Devices ============================== -->
+    <section class="tab-page" data-tab="devices" hidden>
+      <section class="panel">
+        <h2>Pair an iPhone</h2>
+        <div class="panel-subhead">Scan with your iPhone camera to connect the Praktor app. The code works once and expires after 5 minutes.</div>
+        <div id="pairing" class="pair-body">
+          <button class="btn-primary" id="pairStart">Show pairing code</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Paired devices</h2>
+        <div class="panel-subhead">Every device that can read this dashboard remotely. Revoking one cuts it off on its very next request.</div>
+        <div id="devices"><div class="empty">Loading…</div></div>
+      </section>
+    </section>
+
     <footer class="hint">Objectives are driven by the supervisor daemon — this page just reads and, for decisions, answers into the same database.</footer>
   </main>
 
   <script src="/app.js"></script>
   <script src="/index.js"></script>
+  <script src="/devices.js"></script>
 </body>
 </html>

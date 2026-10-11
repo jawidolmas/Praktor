@@ -133,5 +133,11 @@ export function describeEvent(payload: EventPayload): EventDisplay {
 
     case "graphify.unavailable":
       return { kind: "warn", text: `graphify unavailable: ${truncate(payload.detail, 200)}` };
+
+    case "device.paired":
+      return { kind: "info", text: `Paired device "${payload.name}"` };
+
+    case "device.revoked":
+      return { kind: "warn", text: `Revoked device "${payload.name}"` };
   }
 }

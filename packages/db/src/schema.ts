@@ -271,6 +271,27 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(),
 });
 
+/**
+ * Paired companion devices (the iOS app). Only a SHA-256 of each device's
+ * bearer token is stored — the token itself is shown exactly once, at
+ * pairing, and lives on the device (iOS Keychain). A leaked copy of this
+ * database therefore can't be replayed against the API. Revocation is a
+ * timestamp rather than a delete so the audit trail (who was paired, when,
+ * when they were cut off) survives.
+ */
+export const devices = sqliteTable(
+  "devices",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    createdAt: integer("created_at").notNull().default(now),
+    lastSeenAt: integer("last_seen_at"),
+    revokedAt: integer("revoked_at"),
+  },
+  (t) => [uniqueIndex("devices_token_hash_idx").on(t.tokenHash)],
+);
+
 export type ObjectiveRow = typeof objectives.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;
 export type RunRow = typeof runs.$inferSelect;

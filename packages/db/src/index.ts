@@ -4,3 +4,4 @@ export * from "./store.js";
 export * from "./migrate.js";
 export * from "./daemon.js";
 export * from "./autostart.js";
+export * from "./devices.js";
