@@ -36,6 +36,7 @@
     "daemon": "tsx apps/daemon/src/index.ts"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.7",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.7.0",
     "drizzle-kit": "^0.31.4",
