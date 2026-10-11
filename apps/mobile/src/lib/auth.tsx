@@ -1,7 +1,6 @@
 import type { Session } from '@supabase/supabase-js';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
-import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -74,11 +73,25 @@ export async function signInWithApple(): Promise<SignInResult> {
   }
 }
 
-/** Where Google sends the browser back to: `praktor://auth-callback` in a
- *  real build, `exp://<this PC>:8081/--/auth-callback` inside Expo Go. Each
- *  must be on the Supabase project's Redirect URLs allow-list. */
-export function googleRedirectUrl(): string {
-  return Linking.createURL('auth-callback');
+/**
+ * Where sign-in returns to — the only entry on the Supabase project's
+ * Redirect URLs allow-list. The sign-in sheet (ASWebAuthenticationSession)
+ * catches this address itself, so it works the same in Expo Go as in the
+ * real app, without iOS routing the link to anyone. Supabase matches it
+ * exactly: no wildcard, nothing else can be substituted for it.
+ */
+export const AUTH_REDIRECT = 'praktor://auth-callback';
+
+/** Reads one query parameter. Hand-rolled because React Native's URL
+ *  implementation doesn't fully support searchParams. */
+export function queryParam(url: string, name: string): string | undefined {
+  const match = new RegExp(`[?&]${name}=([^&#]*)`).exec(url);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]!.replace(/\+/g, ' '));
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -89,7 +102,7 @@ export function googleRedirectUrl(): string {
  * crypto-shim) binds the returned code to this device.
  */
 export async function signInWithGoogle(): Promise<SignInResult> {
-  const redirectTo = googleRedirectUrl();
+  const redirectTo = AUTH_REDIRECT;
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
@@ -99,10 +112,9 @@ export async function signInWithGoogle(): Promise<SignInResult> {
   const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo, { preferEphemeralSession: true });
   if (result.type !== 'success') return { ok: false, cancelled: true, message: '' };
 
-  const { queryParams } = Linking.parse(result.url);
-  const code = typeof queryParams?.code === 'string' ? queryParams.code : undefined;
+  const code = queryParam(result.url, 'code');
   if (!code) {
-    const denied = queryParams?.error === 'access_denied';
+    const denied = queryParam(result.url, 'error') === 'access_denied';
     return { ok: false, cancelled: denied, message: denied ? '' : 'Google didn’t complete the sign-in. Please try again.' };
   }
 
