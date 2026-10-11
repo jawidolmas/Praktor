@@ -21,7 +21,7 @@ const EMPTY: Record<ObjectiveGroup, { title: string; message: string }> = {
   stopped: { title: 'Nothing stopped', message: 'Failed or cancelled objectives would appear here.' },
 };
 
-function ObjectiveRow({ o }: { o: Objective }) {
+function ObjectiveRow({ o, computer }: { o: Objective; computer?: string }) {
   const look = objectiveLook(o);
   return (
     <View style={styles.row} accessible accessibilityLabel={`${o.title}. ${look.label}. ${o.repo_name}.`}>
@@ -33,7 +33,7 @@ function ObjectiveRow({ o }: { o: Objective }) {
         {o.title}
       </Text>
       <Text style={styles.meta} numberOfLines={1}>
-        {o.repo_name} · {o.model.replace(/^claude-/, '')} · {money(o.cost_usd)}
+        {[computer, o.repo_name, o.model.replace(/^claude-/, ''), money(o.cost_usd)].filter(Boolean).join(' · ')}
       </Text>
     </View>
   );
@@ -56,7 +56,16 @@ export default function Objectives() {
   }, [objectives.data]);
 
   const loading = objectives.data === undefined && !objectives.error;
-  const noComputer = hosts.data !== undefined && hosts.data.filter((h) => !h.revoked_at).length === 0;
+  const activeHosts = (hosts.data ?? []).filter((h) => !h.revoked_at);
+  // Only when there's truly nothing yet: no computer *and* nothing synced.
+  // Objectives from a since-removed computer still deserve to be browsable.
+  const noComputer =
+    hosts.data !== undefined && activeHosts.length === 0 && (objectives.data ?? []).length === 0;
+  // Name the computer on each row once there's more than one to tell apart.
+  const computerName = useMemo(() => {
+    const names = new Map((hosts.data ?? []).map((h) => [h.id, h.name] as const));
+    return names.size > 1 ? (id: string) => names.get(id) : () => undefined;
+  }, [hosts.data]);
 
   return (
     <ScrollView
@@ -94,7 +103,7 @@ export default function Objectives() {
       ) : (
         <Section>
           {visible.map((o) => (
-            <ObjectiveRow key={o.id} o={o} />
+            <ObjectiveRow key={o.id} o={o} computer={computerName(o.host_id)} />
           ))}
         </Section>
       )}

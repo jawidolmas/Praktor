@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
@@ -82,6 +83,7 @@ export function useLive<T>(key: string, tables: string[], fetcher: () => Promise
   const [refreshing, setRefreshing] = useState(false);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const instance = useId();
 
   const load = useCallback(async () => {
     try {
@@ -106,7 +108,10 @@ export function useLive<T>(key: string, tables: string[], fetcher: () => Promise
       timer = setTimeout(load, 400);
     };
 
-    const channel = supabase.channel(`live:${key}`);
+    // supabase-js hands back the *same* channel for a repeated name, so two
+    // screens watching one table would share — and tear down — each other's
+    // subscription. Every hook instance gets its own.
+    const channel = supabase.channel(`live:${key}:${instance}`);
     for (const table of tables) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, soon);
     }
@@ -123,7 +128,15 @@ export function useLive<T>(key: string, tables: string[], fetcher: () => Promise
     };
     // `tables` is a constant list at every call site; keyed by `key`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, load]);
+  }, [key, instance, load]);
+
+  // Coming back to a screen (say, after adding a computer in the sheet)
+  // re-reads, rather than trusting what was on screen before it was covered.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   return { data, error, refreshing, refresh };
 }
