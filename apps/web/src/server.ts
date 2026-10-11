@@ -2,8 +2,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import QRCode from "qrcode";
-import { listDevices, revokeDevice, type Db } from "@exec/db";
+import type { Db } from "@exec/db";
 import {
   answerOpenDecision,
   approveObjective,
@@ -22,14 +21,7 @@ import {
   listPolicies,
   listProfile,
 } from "./api.js";
-import {
-  PairingCodes,
-  RateLimiter,
-  isLocalRequest,
-  isSameOriginJsonWrite,
-  type PublicUrlResult,
-} from "./security.js";
-import { handleV1 } from "./v1.js";
+import { isLocalRequest, isSameOriginJsonWrite } from "./security.js";
 
 const PUBLIC_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..", "public");
 
@@ -103,37 +95,26 @@ function serveStatic(res: ServerResponse, requestPath: string): boolean {
  * scale, a 1s poll of an indexed, id-ordered query is unnoticeable and far
  * simpler than wiring up a change bus.
  */
-function streamObjectiveEvents(
-  db: Db,
-  req: IncomingMessage,
-  res: ServerResponse,
-  objectiveId: string,
-  resumeAfter?: number,
-): void {
+function streamObjectiveEvents(db: Db, req: IncomingMessage, res: ServerResponse, objectiveId: string): void {
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
 
-  // Every message carries the newest event id it contains, so a client that
-  // drops (a phone changing networks) reconnects with Last-Event-ID and gets
-  // only what it missed instead of the whole backlog again.
-  let lastId = resumeAfter ?? 0;
-  if (resumeAfter === undefined) {
-    const backlog = getObjectiveEvents(db, objectiveId);
-    for (const event of backlog) {
-      lastId = Math.max(lastId, event.id);
-    }
-    res.write(`id: ${lastId}\ndata: ${JSON.stringify({ backlog })}\n\n`);
+  let lastId = 0;
+  const backlog = getObjectiveEvents(db, objectiveId);
+  for (const event of backlog) {
+    lastId = Math.max(lastId, event.id);
   }
+  res.write(`data: ${JSON.stringify({ backlog })}\n\n`);
 
   const poll = setInterval(() => {
     try {
       const fresh = getObjectiveEvents(db, objectiveId, lastId);
       if (fresh.length > 0) {
         lastId = Math.max(lastId, ...fresh.map((e) => e.id));
-        res.write(`id: ${lastId}\ndata: ${JSON.stringify({ events: fresh })}\n\n`);
+        res.write(`data: ${JSON.stringify({ events: fresh })}\n\n`);
       } else {
         res.write(`: heartbeat\n\n`);
       }
@@ -146,18 +127,7 @@ function streamObjectiveEvents(
   req.on("close", () => clearInterval(poll));
 }
 
-export interface DashboardServerOptions {
-  /** Where a paired phone should connect — see resolvePublicUrl. */
-  publicUrl?: () => PublicUrlResult;
-}
-
-const NOT_REACHABLE: PublicUrlResult = { ok: false, reason: "Pairing isn't configured for this server." };
-
-export function createDashboardServer(db: Db, options: DashboardServerOptions = {}) {
-  const pairing = new PairingCodes();
-  const pairLimiter = new RateLimiter(10, 60_000);
-  const publicUrl = options.publicUrl ?? (() => NOT_REACHABLE);
-
+export function createDashboardServer(db: Db) {
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
@@ -167,24 +137,8 @@ export function createDashboardServer(db: Db, options: DashboardServerOptions = 
     res.setHeader("referrer-policy", "no-referrer");
     if (path.startsWith("/api/")) res.setHeader("cache-control", "no-store");
 
-    if (path === "/api/v1" || path.startsWith("/api/v1/")) {
-      return handleV1(
-        {
-          db,
-          pairing,
-          pairLimiter,
-          readJsonBody: (r) => readJsonBody(r),
-          sendJson,
-          streamObjectiveEvents: (r, s, id, resumeAfter) => streamObjectiveEvents(db, r, s, id, resumeAfter),
-        },
-        req,
-        res,
-        url,
-      );
-    }
-
-    // Everything below has no login of its own: it's only safe because
-    // nothing but this machine can reach it. See security.ts.
+    // This server has no login of its own: it's only safe because nothing
+    // but this machine can reach it. See security.ts.
     if (!isLocalRequest(req)) {
       return sendJson(res, 403, { error: "The dashboard is only available on this computer." });
     }
@@ -193,31 +147,6 @@ export function createDashboardServer(db: Db, options: DashboardServerOptions = 
     }
 
     try {
-      if (req.method === "POST" && path === "/api/pairing") {
-        const target = publicUrl();
-        if (!target.ok) return sendJson(res, 409, { ok: false, error: target.reason });
-        const { code, expiresAt } = pairing.create();
-        const link = `praktor://pair?url=${encodeURIComponent(target.url)}&code=${encodeURIComponent(code)}`;
-        const qrSvg = await QRCode.toString(link, { type: "svg", errorCorrectionLevel: "M", margin: 1 });
-        return sendJson(res, 200, { ok: true, url: target.url, expiresAt, qrSvg, link });
-      }
-
-      if (req.method === "POST" && path === "/api/pairing/cancel") {
-        pairing.cancel();
-        return sendJson(res, 200, { ok: true });
-      }
-
-      if (path === "/api/devices") {
-        return sendJson(res, 200, listDevices(db));
-      }
-
-      const revokeMatch = path.match(/^\/api\/devices\/([A-Za-z0-9_-]{1,64})\/revoke$/);
-      if (req.method === "POST" && revokeMatch?.[1]) {
-        return revokeDevice(db, revokeMatch[1])
-          ? sendJson(res, 200, { ok: true })
-          : sendJson(res, 404, { ok: false, error: "no such active device" });
-      }
-
       const answerMatch = path.match(/^\/api\/decisions\/([^/]+)\/answer$/);
       if (req.method === "POST" && answerMatch?.[1]) {
         const body = (await readJsonBody(req)) as { answer?: unknown; answeredBy?: unknown };

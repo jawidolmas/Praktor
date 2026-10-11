@@ -7,7 +7,6 @@
     "@exec/core": "*",
     "@exec/db": "*",
     "@exec/worker": "*",
-    "drizzle-orm": "^0.45.2",
-    "qrcode": "1.5.4"
+    "drizzle-orm": "^0.45.2"
   }
 }

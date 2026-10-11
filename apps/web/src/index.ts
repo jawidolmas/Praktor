@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-import { networkInterfaces } from "node:os";
 import { openDb, runMigrations } from "@exec/db";
 import { startAutostartStatusCache } from "./api.js";
 import { createDashboardServer } from "./server.js";
-import { resolvePublicUrl } from "./security.js";
 
 function main(): void {
   const port = Number(process.env["EXEC_WEB_PORT"] ?? 4317);
@@ -19,17 +17,7 @@ function main(): void {
   // on the request path.
   startAutostartStatusCache();
 
-  const server = createDashboardServer(db, {
-    // Re-resolved on every pairing request, so bringing Tailscale up after
-    // the dashboard started still works without a restart.
-    publicUrl: () =>
-      resolvePublicUrl({
-        explicit: process.env["EXEC_WEB_PUBLIC_URL"],
-        boundHost: host,
-        port,
-        interfaces: networkInterfaces(),
-      }),
-  });
+  const server = createDashboardServer(db);
   server.listen(port, host, () => {
     console.log(`Praktor dashboard: http://${host}:${port}`);
     console.log(`Reading:           ${path}`);

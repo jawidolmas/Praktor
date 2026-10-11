@@ -64,7 +64,7 @@ function call(method: string, path: string, opts: { headers?: Record<string, str
 beforeEach(async () => {
   db = openDb({ path: ":memory:" }).db;
   runMigrations(db);
-  server = createDashboardServer(db, { publicUrl: () => ({ ok: true, url: "https://box.tail1.ts.net" }) });
+  server = createDashboardServer(db);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
 });
@@ -72,15 +72,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await new Promise<void>((r) => server.close(() => r()));
 });
-
-async function pairDevice(name = "iPhone"): Promise<string> {
-  const shown = await call("POST", "/api/pairing", { body: {} });
-  expect(shown.status).toBe(200);
-  const code = new URL(shown.body.link).searchParams.get("code")!;
-  const paired = await call("POST", "/api/v1/pair", { body: { code, deviceName: name } });
-  expect(paired.status).toBe(201);
-  return paired.body.token;
-}
 
 describe("local dashboard guard", () => {
   it("serves the dashboard API to this machine", async () => {
@@ -118,80 +109,6 @@ describe("local dashboard guard", () => {
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["x-frame-options"]).toBe("DENY");
     expect(res.headers["cache-control"]).toBe("no-store");
-  });
-});
-
-describe("/api/v1", () => {
-  it("requires a token on every route", async () => {
-    for (const path of ["/api/v1/me", "/api/v1/objectives", "/api/v1/objectives/abc/tree", "/api/v1/daemon"]) {
-      expect((await call("GET", path)).status).toBe(401);
-      expect((await call("GET", path, { headers: { authorization: "Bearer pk_forged" } })).status).toBe(401);
-    }
-  });
-
-  it("requires a token even through a proxy that hits the local guard's blind spot", async () => {
-    expect((await call("GET", "/api/v1/objectives", { headers: { "x-forwarded-for": "1.2.3.4" } })).status).toBe(401);
-  });
-
-  it("pairs a device end to end and serves it", async () => {
-    const token = await pairDevice("Jawid's iPhone");
-    const me = await call("GET", "/api/v1/me", { headers: { authorization: `Bearer ${token}` } });
-    expect(me.status).toBe(200);
-    expect(me.body).toMatchObject({ apiVersion: 1, device: { name: "Jawid's iPhone" } });
-    expect((await call("GET", "/api/v1/objectives", { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
-  });
-
-  it("puts the public URL in the pairing link", async () => {
-    const shown = await call("POST", "/api/pairing", { body: {} });
-    const link = new URL(shown.body.link);
-    expect(link.protocol).toBe("praktor:");
-    expect(link.searchParams.get("url")).toBe("https://box.tail1.ts.net");
-    expect(shown.body.qrSvg).toContain("<svg");
-  });
-
-  it("won't redeem a pairing code twice", async () => {
-    const shown = await call("POST", "/api/pairing", { body: {} });
-    const code = new URL(shown.body.link).searchParams.get("code")!;
-    expect((await call("POST", "/api/v1/pair", { body: { code, deviceName: "a" } })).status).toBe(201);
-    expect((await call("POST", "/api/v1/pair", { body: { code, deviceName: "b" } })).status).toBe(401);
-  });
-
-  it("rejects a pairing request without a usable name", async () => {
-    const shown = await call("POST", "/api/pairing", { body: {} });
-    const code = new URL(shown.body.link).searchParams.get("code")!;
-    expect((await call("POST", "/api/v1/pair", { body: { code, deviceName: "\u0000" } })).status).toBe(400);
-  });
-
-  it("refuses to show a pairing code to anyone but this machine", async () => {
-    expect((await call("POST", "/api/pairing", { body: {}, headers: { "x-forwarded-for": "1.2.3.4" } })).status).toBe(403);
-  });
-
-  it("rate-limits pairing attempts", async () => {
-    const statuses: number[] = [];
-    for (let i = 0; i < 12; i++) {
-      statuses.push((await call("POST", "/api/v1/pair", { body: { code: "guess", deviceName: "x" } })).status);
-    }
-    expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
-    expect(statuses.slice(10)).toEqual([429, 429]);
-  });
-
-  it("cuts off a revoked device immediately", async () => {
-    const token = await pairDevice();
-    const [device] = (await call("GET", "/api/devices")).body;
-    expect((await call("POST", `/api/devices/${device.id}/revoke`, { body: {} })).status).toBe(200);
-    expect((await call("GET", "/api/v1/me", { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
-  });
-
-  it("is read-only", async () => {
-    const token = await pairDevice();
-    const auth = { authorization: `Bearer ${token}` };
-    expect((await call("POST", "/api/v1/objectives", { headers: auth, body: {} })).status).toBe(405);
-  });
-
-  it("never reaches a query with a malformed id", async () => {
-    const token = await pairDevice();
-    const r = await call("GET", "/api/v1/objectives/..%2F..%2Fetc/tree", { headers: { authorization: `Bearer ${token}` } });
-    expect(r.status).toBe(404);
   });
 });
 

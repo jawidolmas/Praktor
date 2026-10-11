@@ -241,21 +241,6 @@ const ObjectiveApproved = z.object({
   approvedBy: z.string(),
 });
 
-/** A companion device (the iOS app) was paired with, or cut off from, the
- *  API. Security-relevant, so it lands in the same append-only log as
- *  everything else instead of only in the mutable `devices` table. */
-const DevicePaired = z.object({
-  type: z.literal("device.paired"),
-  deviceId: z.string(),
-  name: z.string(),
-});
-
-const DeviceRevoked = z.object({
-  type: z.literal("device.revoked"),
-  deviceId: z.string(),
-  name: z.string(),
-});
-
 export const EventPayloadSchema = z.discriminatedUnion("type", [
   ObjectiveCreated,
   ObjectiveStatusChanged,
@@ -283,8 +268,6 @@ export const EventPayloadSchema = z.discriminatedUnion("type", [
   Note,
   ObjectiveApproved,
   GraphifyUnavailable,
-  DevicePaired,
-  DeviceRevoked,
 ]);
 export type EventPayload = z.infer<typeof EventPayloadSchema>;
 export type EventType = EventPayload["type"];
