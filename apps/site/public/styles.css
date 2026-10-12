@@ -713,7 +713,7 @@ section { padding: 84px 0; }
 
 .statusfeed-cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 40px;
   border-top: 1px solid var(--border-soft);
   padding-top: 24px;
@@ -781,6 +781,10 @@ section { padding: 84px 0; }
 .statusfeed-log-date { font-size: 11px; letter-spacing: 0.06em; color: var(--accent-text); margin: 0 0 8px; }
 .statusfeed-log-date::before { content: "$ "; color: var(--text-dim); }
 .statusfeed-log ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Long identifiers (`query_graph/get_neighbors/…`) have no natural break
+   point; let them wrap rather than clip on a narrow screen. */
+.statusfeed-log li,
+.statusfeed-features li { overflow-wrap: anywhere; }
 .statusfeed-log li { font-size: 12.5px; line-height: 1.55; color: var(--text-muted); padding-left: 16px; position: relative; }
 .statusfeed-log li::before { content: "+"; position: absolute; left: 0; color: var(--success); }
 
@@ -794,7 +798,7 @@ section { padding: 84px 0; }
 .statusfeed-log-more:hover { text-decoration: underline; }
 
 @media (max-width: 780px) {
-  .statusfeed-cols { grid-template-columns: 1fr; gap: 26px; }
+  .statusfeed-cols { grid-template-columns: minmax(0, 1fr); gap: 26px; }
   .statusfeed-bar-path { display: none; }
 }
 
