@@ -52,7 +52,7 @@ function modelBadge(model) {
 // channel actually recorded the answer (telegram-bridge.ts writes
 // "telegram:<user>", the CLI writes "cli-operator" or a --by override,
 // apps/cli/src/decide.ts writes "terminal-operator", the dashboard defaults
-// to "dashboard") — there's no structured column for it, so this is the one
+// to "dashboard", and answers sent from the iOS app arrive as "app") — there's no structured column for it, so this is the one
 // place that convention gets turned into something a person can scan at a
 // glance instead of reading a raw string.
 function channelInfo(answeredBy) {
@@ -63,6 +63,7 @@ function channelInfo(answeredBy) {
   if (s.startsWith("cli")) return { label: "CLI", detail: s, cls: "channel-cli" };
   if (s === "terminal-operator") return { label: "Terminal", detail: "", cls: "channel-terminal" };
   if (s === "dashboard") return { label: "Dashboard", detail: "", cls: "channel-dashboard" };
+  if (s === "app") return { label: "iPhone app", detail: "", cls: "channel-app" };
   return { label: "Human", detail: s, cls: "channel-other" };
 }
 

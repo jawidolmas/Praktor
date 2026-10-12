@@ -99,6 +99,8 @@ export interface DecisionOption {
 export interface Decision {
   id: string;
   key: string;
+  host_id: string;
+  objective_id: string;
   task_id: string | null;
   level: string;
   title: string;
@@ -111,6 +113,60 @@ export interface Decision {
   answered_by: string | null;
   answered_at: number | null;
   created_at: number;
+  /** Embedded from the objectives table on list/detail reads. */
+  objective?: { title: string; repo_name: string } | null;
+}
+
+export interface DecisionAnswer {
+  id: string;
+  decision_id: string;
+  answer: string;
+  status: 'pending' | 'applied' | 'rejected';
+  message: string | null;
+  created_at: string;
+  settled_at: string | null;
+}
+
+const DECISION_COLUMNS =
+  'id, key, host_id, objective_id, task_id, level, title, context, options, recommendation, risk, status, answer, answered_by, answered_at, created_at';
+
+export async function fetchDecisions(): Promise<Decision[]> {
+  const result = await supabase
+    .from('decisions')
+    .select(`${DECISION_COLUMNS}, objective:objectives(title, repo_name)`)
+    .order('created_at', { ascending: false })
+    .limit(200);
+  return unwrap(result) as unknown as Decision[];
+}
+
+export interface DecisionDetail {
+  decision: Decision;
+  answer: DecisionAnswer | null;
+}
+
+export async function fetchDecision(id: string): Promise<DecisionDetail | null> {
+  const [decision, answer] = await Promise.all([
+    supabase
+      .from('decisions')
+      .select(`${DECISION_COLUMNS}, objective:objectives(title, repo_name)`)
+      .eq('id', id)
+      .maybeSingle(),
+    supabase
+      .from('decision_answers')
+      .select('id, decision_id, answer, status, message, created_at, settled_at')
+      .eq('decision_id', id)
+      .maybeSingle(),
+  ]);
+  const d = unwrap(decision);
+  if (!d) return null;
+  return { decision: d as unknown as Decision, answer: (unwrap(answer) as DecisionAnswer | null) ?? null };
+}
+
+/** Sends an answer; idempotent server-side, so a retry is always safe. */
+export async function sendDecisionAnswer(decisionId: string, option: string): Promise<DecisionAnswer> {
+  const { data, error } = await supabase.rpc('answer_decision', { p_decision_id: decisionId, p_answer: option });
+  if (error) throw new Error(error.message);
+  return data as DecisionAnswer;
 }
 
 export interface AgentFile {
@@ -167,9 +223,7 @@ export async function fetchObjectiveDetail(id: string): Promise<ObjectiveDetail 
       .order('started_at'),
     supabase
       .from('decisions')
-      .select(
-        'id, key, task_id, level, title, context, options, recommendation, risk, status, answer, answered_by, answered_at, created_at',
-      )
+      .select(DECISION_COLUMNS)
       .eq('objective_id', id)
       .order('created_at', { ascending: false }),
     supabase

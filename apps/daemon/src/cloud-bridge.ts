@@ -1,9 +1,11 @@
 import {
   CloudSync,
+  SupabaseAnswerInbox,
   SupabaseCloudWriter,
   createCloudClient,
   getHostStatus,
   loadCloudConfig,
+  processAnswers,
   type CloudConfig,
   type SupabaseClient,
 } from "@exec/cloud";
@@ -25,9 +27,38 @@ const SYNC_EVERY_MS = 10_000;
 const BACKLOG_EVERY_MS = 1_000;
 const IDLE_RECHECK_MS = 60_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
+/** Answers arrive over Realtime the instant they're sent; this re-check is
+ *  only the safety net for a dropped live connection. */
+const ANSWER_RECHECK_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
+}
+
+/** A sleep that something else can cut short — here, a Realtime message
+ *  saying an answer just arrived. A wake that lands while nobody is asleep
+ *  is remembered, so it's never lost between checks. */
+class Waker {
+  flagged = false;
+  private cut: (() => void) | undefined;
+
+  wake(): void {
+    this.flagged = true;
+    this.cut?.();
+  }
+
+  sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.cut = undefined;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.cut = done;
+      if (this.flagged) done();
+    });
+  }
 }
 
 /** Logs a message only when it differs from the last one, so a long outage
@@ -58,6 +89,9 @@ export async function runCloudBridge(db: Db): Promise<never> {
   const log = logOnce();
   let config: CloudConfig | undefined;
   let client: SupabaseClient | undefined;
+  // Kept across re-checks of the host, so repeated failures really do back
+  // off instead of restarting from the minimum each time.
+  let backoff = SYNC_EVERY_MS;
 
   for (;;) {
     const latest = loadCloudConfig(db);
@@ -89,23 +123,44 @@ export async function runCloudBridge(db: Db): Promise<never> {
 
     log(`syncing to ${new URL(latest.url).host}.`);
     const sync = new CloudSync(db, new SupabaseCloudWriter(client), { owner_id: host.ownerId, host_id: host.hostId });
-    let backoff = SYNC_EVERY_MS;
+    const inbox = new SupabaseAnswerInbox(client, host.hostId);
+    const waker = new Waker();
+    const stopWatching = inbox.watch(() => waker.wake());
+    let nextSync = 0;
+    let nextAnswerCheck = 0;
 
-    // Inner loop: sync until something goes wrong, then fall back out to
-    // re-check the host (it may have been revoked or the project changed).
-    for (;;) {
-      try {
-        const report = await sync.syncOnce();
-        if (backoff !== SYNC_EVERY_MS) log("relay reachable again — sync resumed.");
-        backoff = SYNC_EVERY_MS;
-        await sleep(report.backlog ? BACKLOG_EVERY_MS : SYNC_EVERY_MS);
-        if (!sameConfig(config, loadCloudConfig(db))) break;
-      } catch (err) {
-        log(`sync failed (${err instanceof Error ? err.message : String(err)}) — retrying with backoff.`);
-        await sleep(backoff);
-        backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
-        break;
+    // Inner loop: apply answers the moment they arrive and sync on a steady
+    // beat, until something goes wrong — then fall back out to re-check the
+    // host (it may have been revoked, or the project changed).
+    try {
+      for (;;) {
+        try {
+          let applied = 0;
+          if (waker.flagged || Date.now() >= nextAnswerCheck) {
+            waker.flagged = false;
+            applied = await processAnswers(db, inbox);
+            nextAnswerCheck = Date.now() + ANSWER_RECHECK_MS;
+            if (applied > 0) console.log(`[cloud] applied ${applied} answer${applied === 1 ? "" : "s"} from the app.`);
+          }
+          // An applied answer changes the decision: send it straight back so
+          // the phone sees "answered" within a second, not on the next beat.
+          if (applied > 0 || Date.now() >= nextSync) {
+            const report = await sync.syncOnce();
+            nextSync = Date.now() + (report.backlog ? BACKLOG_EVERY_MS : SYNC_EVERY_MS);
+          }
+          if (backoff !== SYNC_EVERY_MS) log("relay reachable again — sync resumed.");
+          backoff = SYNC_EVERY_MS;
+          await waker.sleep(Math.max(0, Math.min(nextSync, nextAnswerCheck) - Date.now()));
+          if (!sameConfig(config, loadCloudConfig(db))) break;
+        } catch (err) {
+          log(`sync failed (${err instanceof Error ? err.message : String(err)}) — retrying with backoff.`);
+          await sleep(backoff);
+          backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+          break;
+        }
       }
+    } finally {
+      stopWatching();
     }
   }
 }

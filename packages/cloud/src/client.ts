@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { execHome } from "@exec/db";
 import type { CloudConfig } from "./config.js";
+import type { AnswerInbox, PendingAnswer } from "./answers.js";
 import type { CloudTable, CloudWriter } from "./sync.js";
 
 /**
@@ -114,5 +115,46 @@ export class SupabaseCloudWriter implements CloudWriter {
   async heartbeat(): Promise<void> {
     const { error } = await this.client.rpc("host_heartbeat");
     if (error) throw new Error(`heartbeat: ${error.message}`);
+  }
+}
+
+/** Answers from the phone addressed to this computer. Reads are narrowed by
+ *  RLS as well as by the filter: a host can only ever see its own. */
+export class SupabaseAnswerInbox implements AnswerInbox {
+  constructor(
+    private readonly client: SupabaseClient,
+    private readonly hostId: string,
+  ) {}
+
+  async pending(): Promise<PendingAnswer[]> {
+    const { data, error } = await this.client
+      .from("decision_answers")
+      .select("id, decision_id, decision_key, answer")
+      .eq("host_id", this.hostId)
+      .eq("status", "pending")
+      .order("created_at")
+      .limit(20);
+    if (error) throw new Error(`decision_answers: ${error.message}`);
+    return data as PendingAnswer[];
+  }
+
+  async settle(id: string, status: "applied" | "rejected", message: string): Promise<void> {
+    const { error } = await this.client.rpc("settle_decision_answer", { p_id: id, p_status: status, p_message: message });
+    if (error) throw new Error(`settle answer: ${error.message}`);
+  }
+
+  /** Calls `onNew` the moment an answer for this computer is inserted. */
+  watch(onNew: () => void): () => void {
+    const channel = this.client
+      .channel(`answers:${this.hostId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "decision_answers", filter: `host_id=eq.${this.hostId}` },
+        onNew,
+      )
+      .subscribe();
+    return () => {
+      void this.client.removeChannel(channel);
+    };
   }
 }

@@ -300,6 +300,7 @@ main {
 .channel-badge.channel-cli { background: color-mix(in srgb, var(--info) 15%, var(--bg-elevated)); color: var(--info); border-color: color-mix(in srgb, var(--info) 35%, transparent); }
 .channel-badge.channel-terminal { background: color-mix(in srgb, var(--muted) 20%, var(--bg-elevated)); color: var(--text-muted); border-color: var(--border); }
 .channel-badge.channel-dashboard { background: color-mix(in srgb, var(--accent) 15%, var(--bg-elevated)); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.channel-badge.channel-app { background: color-mix(in srgb, #066ce7 15%, var(--bg-elevated)); color: #066ce7; border-color: color-mix(in srgb, #066ce7 35%, transparent); }
 .channel-badge.channel-other { background: color-mix(in srgb, var(--success) 15%, var(--bg-elevated)); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
 .channel-badge.channel-none { background: color-mix(in srgb, var(--muted) 15%, var(--bg-elevated)); color: var(--text-muted); border-color: var(--border); }
 .channel-detail { color: var(--text-muted); }

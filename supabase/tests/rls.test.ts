@@ -255,3 +255,119 @@ describe("heartbeat", () => {
     expect(row!.last_seen_at).not.toBeNull();
   });
 });
+
+describe('answering decisions', () => {
+  const OPTIONS = JSON.stringify([
+    { id: 'A', label: 'Retry with more time', pros: [], cons: [] },
+    { id: 'B', label: 'Skip this task', pros: [], cons: [] },
+  ]);
+
+  async function decision(id = 'dec-1', status = 'open') {
+    await as(
+      host1,
+      `insert into public.decisions (owner_id, host_id, id, key, objective_id, level, title, context, options,
+         recommendation, risk, status, created_at)
+       values ($1, $2, $3, 'DEC-1', 'obj-1', 'L2', 'What now?', 'ctx', $4::jsonb, 'A', 'low', $5, 1)`,
+      [OWNER_A, HOST_1, id, OPTIONS, status],
+    );
+  }
+
+  const answer = (who: Who, id: string, option: string) =>
+    as<{ id: string; status: string; answer: string; host_id: string }>(
+      who,
+      'select * from public.answer_decision($1, $2)',
+      [id, option],
+    );
+
+  beforeEach(async () => {
+    await claim(host1, ownerA);
+    await as(host1, ...objective(OWNER_A, HOST_1));
+  });
+
+  it('lets the owner answer an open decision with one of its options, addressed to the right computer', async () => {
+    await decision();
+    const [row] = await answer(ownerA, 'dec-1', 'A');
+    expect(row).toMatchObject({ status: 'pending', answer: 'A', host_id: HOST_1 });
+  });
+
+  it('is idempotent for a repeated identical answer, and refuses a different one', async () => {
+    await decision();
+    const [first] = await answer(ownerA, 'dec-1', 'A');
+    const [again] = await answer(ownerA, 'dec-1', 'A');
+    expect(again!.id).toBe(first!.id);
+    await expect(answer(ownerA, 'dec-1', 'B')).rejects.toThrow(/already answered/);
+    expect(await as(ownerA, 'select id from public.decision_answers')).toHaveLength(1);
+  });
+
+  it('refuses an answer that is not one of the options', async () => {
+    await decision();
+    await expect(answer(ownerA, 'dec-1', 'Z')).rejects.toThrow(/not one of the options/);
+  });
+
+  it('refuses a decision that is no longer open', async () => {
+    await decision('dec-2', 'answered');
+    await expect(answer(ownerA, 'dec-2', 'A')).rejects.toThrow(/already answered/);
+  });
+
+  it("refuses someone else's decision without revealing it exists", async () => {
+    await decision();
+    await expect(answer(ownerB, 'dec-1', 'A')).rejects.toThrow(/no such decision/);
+  });
+
+  it('refuses anonymous callers — a PC can never answer on your behalf', async () => {
+    await decision();
+    await expect(answer(host1, 'dec-1', 'A')).rejects.toThrow(/sign in/);
+    await expect(as('anon', "select public.answer_decision('dec-1', 'A')")).rejects.toThrow(/permission denied/);
+  });
+
+  it('refuses once the computer that asked was removed', async () => {
+    await decision();
+    await as(ownerA, 'select public.revoke_host($1)', [HOST_1]);
+    await expect(answer(ownerA, 'dec-1', 'A')).rejects.toThrow(/was removed/);
+  });
+
+  it('cannot be written directly, only through the function', async () => {
+    await decision();
+    await expect(
+      as(
+        ownerA,
+        `insert into public.decision_answers (owner_id, host_id, decision_id, decision_key, answer)
+         values ($1, $2, 'dec-1', 'DEC-1', 'A')`,
+        [OWNER_A, HOST_1],
+      ),
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('is visible to the computer it is addressed to, and to no other', async () => {
+    await claim(host2, ownerA);
+    await decision();
+    await answer(ownerA, 'dec-1', 'A');
+    expect(await as(host1, 'select answer from public.decision_answers')).toEqual([{ answer: 'A' }]);
+    expect(await as(host2, 'select answer from public.decision_answers')).toEqual([]);
+    expect(await as(ownerB, 'select answer from public.decision_answers')).toEqual([]);
+  });
+
+  it('can be settled once, only by the addressed computer', async () => {
+    await claim(host2, ownerA);
+    await decision();
+    const [row] = await answer(ownerA, 'dec-1', 'A');
+    const settle = (who: Who, status: string) =>
+      as(who, 'select public.settle_decision_answer($1, $2, $3) as ok', [row!.id, status, 'done']);
+
+    expect(await settle(host2, 'applied')).toEqual([{ ok: false }]);
+    expect(await settle(ownerA, 'applied')).toEqual([{ ok: false }]);
+    expect(await settle(host1, 'applied')).toEqual([{ ok: true }]);
+    expect(await settle(host1, 'rejected')).toEqual([{ ok: false }]);
+    await expect(settle(host1, 'whatever')).rejects.toThrow(/applied or rejected/);
+    expect(await as(ownerA, 'select status from public.decision_answers')).toEqual([{ status: 'applied' }]);
+  });
+
+  it('stops a revoked computer from settling', async () => {
+    await decision();
+    const [row] = await answer(ownerA, 'dec-1', 'A');
+    await as(ownerA, 'select public.revoke_host($1)', [HOST_1]);
+    expect(
+      await as(host1, 'select public.settle_decision_answer($1, $2, $3) as ok', [row!.id, 'applied', 'x']),
+    ).toEqual([{ ok: false }]);
+  });
+});

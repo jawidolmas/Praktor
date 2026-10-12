@@ -118,3 +118,13 @@ export function duration(ms: number): string {
 export function clockTime(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
+
+/** Where an answer came from, as a phrase: "in Telegram", "from this app". */
+export function answeredVia(answeredBy: string | null): string {
+  const by = answeredBy ?? '';
+  if (by === 'app') return 'from the app';
+  if (by.startsWith('telegram')) return 'in Telegram';
+  if (by === 'dashboard') return 'on the dashboard';
+  if (by.includes('cli') || by.includes('terminal')) return 'in the terminal';
+  return by ? `by ${by}` : '';
+}

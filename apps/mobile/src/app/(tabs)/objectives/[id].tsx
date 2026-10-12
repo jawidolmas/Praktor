@@ -1,9 +1,9 @@
 import SegmentedControl from '@react-native-segmented-control/segmented-control';
 import * as Haptics from 'expo-haptics';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FileTree } from '@/components/file-tree';
 import { EmptyState, Section, StatusPill } from '@/components/ui';
@@ -87,18 +87,25 @@ function NeedsYou({ decisions }: { decisions: Decision[] }) {
         </Text>
       </View>
       {decisions.map((d) => (
-        <View key={d.id} style={styles.needsItem}>
-          <Text style={styles.needsItemTitle}>
-            {d.key} · {d.title}
-          </Text>
-          {d.risk ? (
-            <Text style={styles.needsRisk} numberOfLines={3}>
-              Risk: {d.risk}
+        <Pressable
+          key={d.id}
+          onPress={() => router.push({ pathname: '/decisions/[id]', params: { id: d.id } })}
+          accessibilityRole="button"
+          accessibilityHint="Opens the decision so you can answer it"
+          style={({ pressed }) => [styles.needsItem, pressed && { opacity: 0.6 }]}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={styles.needsItemTitle}>
+              {d.key} · {d.title}
             </Text>
-          ) : null}
-        </View>
+            {d.risk ? (
+              <Text style={styles.needsRisk} numberOfLines={3}>
+                Risk: {d.risk}
+              </Text>
+            ) : null}
+          </View>
+          <SymbolView name="chevron.right" size={12} tintColor={C.tertiaryLabel} weight="semibold" />
+        </Pressable>
       ))}
-      <Text style={styles.needsFoot}>Answer on your computer or in Telegram — answering here is coming next.</Text>
     </View>
   );
 }
@@ -355,10 +362,9 @@ const styles = StyleSheet.create({
   },
   needsHead: { flexDirection: 'row', alignItems: 'center', gap: Space.s },
   needsTitle: { ...Type.headline, color: C.label },
-  needsItem: { gap: 2 },
+  needsItem: { flexDirection: 'row', alignItems: 'center', gap: Space.s, paddingVertical: 2 },
   needsItemTitle: { ...Type.subheadline, fontWeight: '600', color: C.label },
   needsRisk: { ...Type.footnote, color: C.secondaryLabel },
-  needsFoot: { ...Type.footnote, color: C.tertiaryLabel },
 
   tabs: { marginHorizontal: Space.l, marginTop: Space.xl },
 
