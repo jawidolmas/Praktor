@@ -18,6 +18,24 @@ describe("buildPrompt", () => {
     expect(prompt.toLowerCase()).toContain("check with");
   });
 
+  it("shows the worker the person's original words, so a planner rewrite can't drop \"ask me\"", () => {
+    // Real case: the planner turned this into "create a file with both
+    // sections", and the worker — seeing only that — never asked.
+    const original =
+      "Create an MD file and ask me in app what should be inside it. Two choices: Phone and Computer.";
+    const prompt = buildPrompt(
+      { intent: "Create a markdown file with a Phone section and a Computer section.", originalRequest: original, ruledOut: [] },
+      "",
+    );
+    expect(prompt).toContain(original);
+    expect(prompt).toContain("that instruction applies to you");
+  });
+
+  it("doesn't repeat the request when it is the intent itself", () => {
+    const prompt = buildPrompt({ intent: "Add a README", originalRequest: "Add a README", ruledOut: [] }, "");
+    expect(prompt).not.toContain("original request");
+  });
+
   it("still includes the intent, ruled-out list, and checkpoint note", () => {
     const prompt = buildPrompt(
       { intent: "Do something", ruledOut: ["approach A"], checkpointNote: "carried over" },

@@ -101,6 +101,10 @@ const PLANNER_INSTRUCTIONS =
   "- Keep tasks as small as you can while each stays independently verifiable — several " +
   "small tasks recover from one bad attempt far better than one large task does.\n" +
   "- If the objective is genuinely a single indivisible step, return exactly one task.\n" +
+  "- If the objective asks you to ask, check with, confirm with, or get input from the person " +
+  "about anything, copy that instruction word for word into the intent of the task it belongs " +
+  "to. Never plan around it — not as a placeholder, a file holding every option, or a note for " +
+  "later: the worker has a tool that reaches the person directly and waits for their answer.\n" +
   "- Prefer checks that ask a real question about behavior (run the tests, run the linter, " +
   "grep for a symbol, check a file exists) over a raw byte-for-byte diff against a reference " +
   "file — line-ending or whitespace differences that mean nothing can still make a literal " +

@@ -4,6 +4,12 @@ import { buildDiagnoserPrompt, buildPlannerPrompt, buildReviewerPrompt } from ".
 const PROFILE = [{ title: "Dependencies", content: "Avoid unnecessary dependencies." }];
 
 describe("buildPlannerPrompt", () => {
+  it("tells the planner to carry \"ask me\" instructions into the task word for word", () => {
+    const prompt = buildPlannerPrompt({ title: "t", brief: "", repoPath: "/tmp/repo", model: "m" }, "");
+    expect(prompt).toContain("copy that instruction word for word");
+    expect(prompt).toContain("Never plan around it");
+  });
+
   it("includes the engineering profile when one is given, and omits it when not", () => {
     const withProfile = buildPlannerPrompt(
       { title: "Add a feature", brief: "", repoPath: "/tmp/repo", model: "m", profile: PROFILE },

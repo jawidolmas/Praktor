@@ -49,6 +49,11 @@ import { graphifyMcpServer } from "./graphify.js";
 
 export interface WorkerPrompt {
   intent: string;
+  /** The person's own words for the whole objective. The planner rewrites
+   *  them into per-task intents, and a rewrite can drop exactly the kind of
+   *  instruction that matters most — "ask me which one" — so the worker
+   *  always sees the original too. */
+  originalRequest?: string;
   ruledOut: string[];
   checkpointNote?: string;
   /** The standing engineering profile — see `DecomposeArgs.profile` in
@@ -71,6 +76,16 @@ export function buildPrompt(prompt: WorkerPrompt, briefing: string): string {
   }
 
   parts.push(prompt.intent);
+
+  const original = prompt.originalRequest?.trim();
+  if (original && original !== prompt.intent.trim()) {
+    parts.push(
+      "\nThis task is one part of a larger objective. The person's original request, in " +
+        `their own words:\n"""\n${original}\n"""\n` +
+        "If it asks to ask, check with, or confirm with them about something your task " +
+        "covers, that instruction applies to you.",
+    );
+  }
 
   parts.push(
     "\nIf the above asks you to ask, check with, confirm with, or notify the " +

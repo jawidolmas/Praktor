@@ -306,6 +306,7 @@ async function runAttempt(
       ...(graph.available ? { graphPath: graph.graphPath } : {}),
       prompt: {
         intent: task.intent,
+        originalRequest: objective.brief.trim() || objective.title,
         ruledOut,
         profile,
         ...(note !== undefined ? { checkpointNote: note } : {}),
