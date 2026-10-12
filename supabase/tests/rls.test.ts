@@ -371,3 +371,87 @@ describe('answering decisions', () => {
     ).toEqual([{ ok: false }]);
   });
 });
+
+describe('merge requests', () => {
+  const request = (who: Who, id = 'obj-1') =>
+    as<{ id: string; status: string; host_id: string }>(who, 'select * from public.request_merge($1)', [id]);
+  const setObjective = (status: string, mergedAt: number | null = null) =>
+    as(host1, 'update public.objectives set status = $1, merged_at = $2', [status, mergedAt]);
+
+  beforeEach(async () => {
+    await claim(host1, ownerA);
+    await as(host1, ...objective(OWNER_A, HOST_1));
+    await setObjective('done');
+  });
+
+  it('lets the owner request a merge of a finished objective, addressed to the computer that ran it', async () => {
+    const [row] = await request(ownerA);
+    expect(row).toMatchObject({ status: 'pending', host_id: HOST_1 });
+  });
+
+  it('is idempotent while a request is pending', async () => {
+    const [first] = await request(ownerA);
+    const [again] = await request(ownerA);
+    expect(again!.id).toBe(first!.id);
+    expect(await as(ownerA, 'select id from public.merge_requests')).toHaveLength(1);
+  });
+
+  it('allows a new request after a failed one (e.g. a conflict that was then resolved)', async () => {
+    const [first] = await request(ownerA);
+    await as(host1, 'select public.settle_merge_request($1, $2, $3, $4)', [first!.id, 'failed', 'conflict', false]);
+    const [second] = await request(ownerA);
+    expect(second!.id).not.toBe(first!.id);
+  });
+
+  it('refuses an objective that is not finished, or already merged', async () => {
+    await setObjective('active');
+    await expect(request(ownerA)).rejects.toThrow(/not finished/);
+    await setObjective('done', 123);
+    await expect(request(ownerA)).rejects.toThrow(/already merged/);
+  });
+
+  it("refuses someone else's objective without revealing it exists", async () => {
+    await expect(request(ownerB)).rejects.toThrow(/no such objective/);
+  });
+
+  it('refuses anonymous callers — a PC can never merge on your behalf', async () => {
+    await expect(request(host1)).rejects.toThrow(/sign in/);
+    await expect(as('anon', "select public.request_merge('obj-1')")).rejects.toThrow(/permission denied/);
+  });
+
+  it('refuses once the computer that ran it was removed', async () => {
+    await as(ownerA, 'select public.revoke_host($1)', [HOST_1]);
+    await expect(request(ownerA)).rejects.toThrow(/was removed/);
+  });
+
+  it('cannot be written directly, only through the function', async () => {
+    await expect(
+      as(ownerA, 'insert into public.merge_requests (owner_id, host_id, objective_id) values ($1, $2, $3)', [
+        OWNER_A,
+        HOST_1,
+        'obj-1',
+      ]),
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('can be settled once, only by the addressed computer', async () => {
+    await claim(host2, ownerA);
+    const [row] = await request(ownerA);
+    const settle = (who: Who, status: string) =>
+      as(who, 'select public.settle_merge_request($1, $2, $3, $4) as ok', [row!.id, status, 'Merged.', true]);
+    expect(await settle(host2, 'merged')).toEqual([{ ok: false }]);
+    expect(await settle(ownerA, 'merged')).toEqual([{ ok: false }]);
+    expect(await settle(host1, 'merged')).toEqual([{ ok: true }]);
+    expect(await settle(host1, 'failed')).toEqual([{ ok: false }]);
+    await expect(settle(host1, 'whatever')).rejects.toThrow(/merged or failed/);
+    expect(await as(ownerA, 'select status, pushed from public.merge_requests')).toEqual([{ status: 'merged', pushed: true }]);
+  });
+
+  it('is visible to the addressed computer and the owner only', async () => {
+    await claim(host2, ownerA);
+    await request(ownerA);
+    expect(await as(host1, 'select status from public.merge_requests')).toHaveLength(1);
+    expect(await as(host2, 'select status from public.merge_requests')).toEqual([]);
+    expect(await as(ownerB, 'select status from public.merge_requests')).toEqual([]);
+  });
+});

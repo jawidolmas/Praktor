@@ -8,7 +8,35 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'r
 import { EmptyState, Section } from '@/components/ui';
 import { C, Space, Type } from '@/constants/theme';
 import { answeredVia, timeAgo } from '@/lib/format';
-import { fetchDecisions, useLive, type Decision } from '@/lib/relay';
+import { fetchDecisions, fetchReadyToMerge, useLive, type Decision, type Objective } from '@/lib/relay';
+
+function MergeRow({ o }: { o: Objective }) {
+  return (
+    <Pressable
+      onPress={() => router.push({ pathname: '/objectives/[id]', params: { id: o.id } })}
+      accessibilityRole="button"
+      accessibilityLabel={`${o.title}. Ready to merge.`}
+      accessibilityHint="Opens the objective so you can merge it"
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: C.cardPressed }]}>
+      <View style={styles.rowTop}>
+        <View style={styles.badge}>
+          <SymbolView name="arrow.triangle.merge" size={13} tintColor={C.tint} weight="semibold" />
+          <Text style={[styles.badgeText, { color: C.tint }]}>Ready to merge</Text>
+        </View>
+        <View style={styles.rowTrail}>
+          <Text style={styles.time}>{timeAgo(o.updated_at)}</Text>
+          <SymbolView name="chevron.right" size={12} tintColor={C.tertiaryLabel} weight="semibold" />
+        </View>
+      </View>
+      <Text style={styles.title} numberOfLines={3}>
+        {o.title}
+      </Text>
+      <Text style={styles.meta} numberOfLines={1}>
+        {o.repo_name}
+      </Text>
+    </Pressable>
+  );
+}
 
 function DecisionRow({ d }: { d: Decision }) {
   const open = d.status === 'open';
@@ -62,20 +90,31 @@ function DecisionRow({ d }: { d: Decision }) {
 export default function Decisions() {
   const [segment, setSegment] = useState(0);
   const decisions = useLive('decisions', ['decisions'], fetchDecisions);
+  const merges = useLive('ready-to-merge', ['objectives'], fetchReadyToMerge);
+  const readyToMerge = merges.data ?? [];
 
   const waiting = useMemo(() => (decisions.data ?? []).filter((d) => d.status === 'open'), [decisions.data]);
   const answered = useMemo(() => (decisions.data ?? []).filter((d) => d.status !== 'open'), [decisions.data]);
   // Oldest question first: it has been blocking work the longest.
   const visible = segment === 0 ? [...waiting].reverse() : answered;
+  const waitingCount = waiting.length + readyToMerge.length;
 
   return (
     <ScrollView
       style={styles.screen}
       contentInsetAdjustmentBehavior="automatic"
-      refreshControl={<RefreshControl refreshing={decisions.refreshing} onRefresh={decisions.refresh} />}>
+      refreshControl={
+        <RefreshControl
+          refreshing={decisions.refreshing}
+          onRefresh={() => {
+            decisions.refresh();
+            merges.refresh();
+          }}
+        />
+      }>
       <View style={styles.segments}>
         <SegmentedControl
-          values={[waiting.length ? `Waiting ${waiting.length}` : 'Waiting', 'Answered']}
+          values={[waitingCount ? `Waiting ${waitingCount}` : 'Waiting', 'Answered']}
           selectedIndex={segment}
           onChange={(e) => {
             Haptics.selectionAsync();
@@ -90,7 +129,24 @@ export default function Decisions() {
           title="Can’t reach Praktor"
           message="Check your connection. Pull down to try again."
         />
-      ) : decisions.data === undefined ? null : visible.length === 0 ? (
+      ) : decisions.data === undefined ? null : segment === 0 && waitingCount > 0 ? (
+        <>
+          {readyToMerge.length > 0 ? (
+            <Section title="Ready to merge">
+              {readyToMerge.map((o) => (
+                <MergeRow key={o.id} o={o} />
+              ))}
+            </Section>
+          ) : null}
+          {visible.length > 0 ? (
+            <Section title={readyToMerge.length > 0 ? 'Decisions' : undefined}>
+              {visible.map((d) => (
+                <DecisionRow key={d.id} d={d} />
+              ))}
+            </Section>
+          ) : null}
+        </>
+      ) : visible.length === 0 ? (
         segment === 0 ? (
           <EmptyState
             symbol="checkmark.bubble"

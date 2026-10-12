@@ -2,17 +2,18 @@ import SegmentedControl from '@react-native-segmented-control/segmented-control'
 import * as Haptics from 'expo-haptics';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FileTree } from '@/components/file-tree';
-import { EmptyState, Section, StatusPill } from '@/components/ui';
+import { EmptyState, PrimaryButton, Section, StatusPill } from '@/components/ui';
 import { C, Radius, Space, Type } from '@/constants/theme';
 import {
   changeLook,
   clockTime,
   duration,
   eventLook,
+  hostState,
   money,
   objectiveLook,
   taskLook,
@@ -20,11 +21,14 @@ import {
 } from '@/lib/format';
 import {
   fetchHosts,
+  fetchMergeRequest,
   fetchObjectiveDetail,
   fetchObjectiveEvents,
+  requestMerge,
   useLive,
   type ActivityEvent,
   type Decision,
+  type MergeRequest,
   type ObjectiveDetail,
   type Run,
   type Task,
@@ -106,6 +110,112 @@ function NeedsYou({ decisions }: { decisions: Decision[] }) {
           <SymbolView name="chevron.right" size={12} tintColor={C.tertiaryLabel} weight="semibold" />
         </Pressable>
       ))}
+    </View>
+  );
+}
+
+function ReadyToMerge({
+  detail,
+  request,
+  verdicts,
+  computerOffline,
+  onMerge,
+  busy,
+}: {
+  detail: ObjectiveDetail;
+  request: MergeRequest | null;
+  verdicts: ActivityEvent[];
+  computerOffline: boolean;
+  onMerge: () => void;
+  busy: boolean;
+}) {
+  const o = detail.objective;
+  const files = mergeByPath(detail.files).length;
+  const doneTasks = detail.tasks.filter((t) => t.status === 'done').length;
+  const settledRecently =
+    !!request &&
+    request.status !== 'pending' &&
+    !!request.settled_at &&
+    Date.now() - Date.parse(request.settled_at) < 10 * 60_000;
+
+  // Shown while there's something to merge, while a merge is in flight, and
+  // briefly after one settles so the result doesn't vanish the moment it lands.
+  const mergeable = o.status === 'done' && !o.merged_at;
+  if (!mergeable && request?.status !== 'pending' && !settledRecently) return null;
+
+  let status: React.ReactNode = null;
+  if (request?.status === 'pending') {
+    status = (
+      <View style={styles.mergeStatus} accessibilityLiveRegion="polite">
+        <ActivityIndicator />
+        <Text style={styles.mergeStatusText}>
+          {computerOffline ? 'Your computer is offline — it merges as soon as it’s back.' : 'Merging on your computer…'}
+        </Text>
+      </View>
+    );
+  } else if (request?.status === 'merged' && settledRecently) {
+    status = (
+      <View style={styles.mergeStatus} accessibilityLiveRegion="polite">
+        <SymbolView name="checkmark.circle.fill" size={22} tintColor={C.green} />
+        <Text style={styles.mergeStatusText}>
+          {request.pushed === false ? 'Merged on your computer, but not pushed. ' : 'Merged and pushed. '}
+          {request.message ?? ''}
+        </Text>
+      </View>
+    );
+  } else if (request?.status === 'failed' && mergeable) {
+    status = (
+      <View style={styles.mergeStatus} accessibilityLiveRegion="polite">
+        <SymbolView name="exclamationmark.triangle.fill" size={22} tintColor={C.orange} />
+        <Text style={styles.mergeStatusText}>Couldn’t merge: {request.message ?? 'unknown reason.'}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.merge}>
+      <View style={styles.mergeHead}>
+        <SymbolView name="arrow.triangle.merge" size={20} tintColor={C.tint} weight="semibold" />
+        <Text style={styles.mergeTitle}>{mergeable ? 'Ready to merge' : 'Merge'}</Text>
+      </View>
+      {mergeable ? (
+        <Text style={styles.mergeBody}>
+          {files ? `${files} ${files === 1 ? 'file' : 'files'} changed` : 'Changes'} by {doneTasks}{' '}
+          {doneTasks === 1 ? 'task' : 'tasks'}, merged into the branch checked out in {o.repo_name}, then pushed.
+        </Text>
+      ) : null}
+      {mergeable && verdicts.length > 0 ? (
+        <View style={styles.verdicts}>
+          {verdicts.slice(0, 3).map((v) => (
+            <View key={`${v.host_id}:${v.id}`} style={styles.verdict}>
+              <SymbolView name="checkmark.seal.fill" size={14} tintColor={C.green} />
+              <Text style={styles.verdictText} numberOfLines={3}>
+                {v.text}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {status}
+      {mergeable && request?.status !== 'pending' ? (
+        <>
+          <View style={styles.mergeNote}>
+            <SymbolView name="lock.fill" size={12} tintColor={C.tertiaryLabel} />
+            <Text style={styles.mergeNoteText}>
+              Only file names reach your phone. To read the code first, review it on your computer.
+            </Text>
+          </View>
+          {busy ? (
+            <ActivityIndicator />
+          ) : (
+            <PrimaryButton
+              title={request?.status === 'failed' ? 'Try Again' : 'Merge & Push'}
+              symbol="arrow.triangle.merge"
+              onPress={onMerge}
+            />
+          )}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -250,6 +360,12 @@ export default function ObjectiveScreen() {
     () => fetchObjectiveEvents(id),
   );
   const hosts = useLive('hosts', ['hosts'], fetchHosts);
+  const merge = useLive(
+    `merge:${id}`,
+    [{ table: 'merge_requests', filter: `objective_id=eq.${id}` }],
+    () => fetchMergeRequest(id),
+  );
+  const [merging, setMerging] = useState(false);
 
   const d = detail.data;
   const computer = useMemo(() => {
@@ -257,6 +373,55 @@ export default function ObjectiveScreen() {
     return hosts.data.find((h) => h.id === d.objective.host_id)?.name;
   }, [d, hosts.data]);
   const openDecisions = (d?.decisions ?? []).filter((x) => x.status === 'open');
+  const verdicts = (events.data ?? []).filter((e) => e.type === 'review.result' && e.kind === 'success');
+  const host = d ? hosts.data?.find((h) => h.id === d.objective.host_id) : undefined;
+  const computerOffline = host ? hostState(host) !== 'online' : false;
+
+  // Celebrate once, the moment the computer confirms the merge.
+  const lastMergeStatus = useRef(merge.data?.status);
+  useEffect(() => {
+    if (merge.data?.status === 'merged' && lastMergeStatus.current === 'pending') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    lastMergeStatus.current = merge.data?.status;
+  }, [merge.data?.status]);
+
+  function confirmMerge() {
+    if (!d) return;
+    Alert.alert(
+      `Merge into ${d.objective.repo_name} and push?`,
+      'Your computer merges the agents’ work into the branch checked out in that repo, then pushes it. It stops safely if the repo has uncommitted changes.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Merge & Push',
+          onPress: async () => {
+            setMerging(true);
+            try {
+              await requestMerge(id);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            } catch (err) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              const msg = err instanceof Error ? err.message : '';
+              Alert.alert(
+                'Couldn’t start the merge',
+                /already merged/i.test(msg)
+                  ? 'This objective is already merged.'
+                  : /was removed/i.test(msg)
+                    ? 'The computer that ran it has been removed from your account.'
+                    : /not finished/i.test(msg)
+                      ? 'It isn’t finished yet.'
+                      : 'Check your connection and try again.',
+              );
+            } finally {
+              await merge.refresh();
+              setMerging(false);
+            }
+          },
+        },
+      ],
+    );
+  }
   const fileCount = d ? mergeByPath(d.files).length : 0;
 
   return (
@@ -292,6 +457,14 @@ export default function ObjectiveScreen() {
           <>
             <Hero detail={d} computer={computer} />
             <NeedsYou decisions={openDecisions} />
+            <ReadyToMerge
+              detail={d}
+              request={merge.data ?? null}
+              verdicts={verdicts}
+              computerOffline={computerOffline}
+              onMerge={confirmMerge}
+              busy={merging}
+            />
             <View style={styles.tabs}>
               <SegmentedControl
                 values={[
@@ -365,6 +538,28 @@ const styles = StyleSheet.create({
   needsItem: { flexDirection: 'row', alignItems: 'center', gap: Space.s, paddingVertical: 2 },
   needsItemTitle: { ...Type.subheadline, fontWeight: '600', color: C.label },
   needsRisk: { ...Type.footnote, color: C.secondaryLabel },
+
+  merge: {
+    marginHorizontal: Space.l,
+    marginTop: Space.m,
+    padding: Space.l,
+    gap: Space.m,
+    borderRadius: Radius.card,
+    borderCurve: 'continuous',
+    backgroundColor: C.card,
+    borderWidth: 1.5,
+    borderColor: C.tint,
+  },
+  mergeHead: { flexDirection: 'row', alignItems: 'center', gap: Space.s },
+  mergeTitle: { ...Type.headline, color: C.label },
+  mergeBody: { ...Type.subheadline, color: C.secondaryLabel },
+  verdicts: { gap: 6 },
+  verdict: { flexDirection: 'row', gap: Space.s, alignItems: 'flex-start' },
+  verdictText: { ...Type.footnote, color: C.label, flex: 1 },
+  mergeStatus: { flexDirection: 'row', alignItems: 'center', gap: Space.m },
+  mergeStatusText: { ...Type.subheadline, color: C.label, flex: 1 },
+  mergeNote: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' },
+  mergeNoteText: { ...Type.footnote, color: C.tertiaryLabel, flex: 1 },
 
   tabs: { marginHorizontal: Space.l, marginTop: Space.xl },
 

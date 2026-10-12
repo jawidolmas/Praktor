@@ -4,6 +4,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { execHome } from "@exec/db";
 import type { CloudConfig } from "./config.js";
 import type { AnswerInbox, PendingAnswer } from "./answers.js";
+import type { MergeInbox, PendingMerge } from "./merge.js";
 import type { CloudTable, CloudWriter } from "./sync.js";
 
 /**
@@ -150,6 +151,51 @@ export class SupabaseAnswerInbox implements AnswerInbox {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "decision_answers", filter: `host_id=eq.${this.hostId}` },
+        onNew,
+      )
+      .subscribe();
+    return () => {
+      void this.client.removeChannel(channel);
+    };
+  }
+}
+
+/** Merge requests from the phone addressed to this computer. */
+export class SupabaseMergeInbox implements MergeInbox {
+  constructor(
+    private readonly client: SupabaseClient,
+    private readonly hostId: string,
+  ) {}
+
+  async pending(): Promise<PendingMerge[]> {
+    const { data, error } = await this.client
+      .from("merge_requests")
+      .select("id, objective_id")
+      .eq("host_id", this.hostId)
+      .eq("status", "pending")
+      .order("created_at")
+      .limit(10);
+    if (error) throw new Error(`merge_requests: ${error.message}`);
+    return data as PendingMerge[];
+  }
+
+  async settle(id: string, status: "merged" | "failed", message: string, pushed: boolean | null): Promise<void> {
+    const { error } = await this.client.rpc("settle_merge_request", {
+      p_id: id,
+      p_status: status,
+      p_message: message,
+      p_pushed: pushed,
+    });
+    if (error) throw new Error(`settle merge: ${error.message}`);
+  }
+
+  /** Calls `onNew` the moment a merge for this computer is requested. */
+  watch(onNew: () => void): () => void {
+    const channel = this.client
+      .channel(`merges:${this.hostId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "merge_requests", filter: `host_id=eq.${this.hostId}` },
         onNew,
       )
       .subscribe();

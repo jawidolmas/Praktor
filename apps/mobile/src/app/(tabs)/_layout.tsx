@@ -1,12 +1,14 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 
 import { C } from '@/constants/theme';
-import { fetchDecisions, useLive } from '@/lib/relay';
+import { fetchDecisions, fetchReadyToMerge, useLive } from '@/lib/relay';
 
 /** System tab bar — Liquid Glass on iOS 26, minimizing as you scroll. */
 export default function TabsLayout() {
   const decisions = useLive('decisions-badge', ['decisions'], fetchDecisions);
-  const waiting = (decisions.data ?? []).filter((d) => d.status === 'open').length;
+  const merges = useLive('merge-badge', ['objectives'], fetchReadyToMerge);
+  // Everything waiting on a person: open decisions and finished work to merge.
+  const waiting = (decisions.data ?? []).filter((d) => d.status === 'open').length + (merges.data?.length ?? 0);
 
   return (
     <NativeTabs tintColor={C.tint} minimizeBehavior="onScrollDown">

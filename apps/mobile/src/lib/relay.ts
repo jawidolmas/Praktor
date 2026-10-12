@@ -350,3 +350,48 @@ export function useLive<T>(key: string, tables: Watch[], fetcher: () => Promise<
 
   return { data, error, refreshing, refresh };
 }
+
+export interface MergeRequest {
+  id: string;
+  objective_id: string;
+  status: 'pending' | 'merged' | 'failed';
+  message: string | null;
+  pushed: boolean | null;
+  created_at: string;
+  settled_at: string | null;
+}
+
+/** The most recent merge request for an objective, if any. */
+export async function fetchMergeRequest(objectiveId: string): Promise<MergeRequest | null> {
+  const result = await supabase
+    .from('merge_requests')
+    .select('id, objective_id, status, message, pushed, created_at, settled_at')
+    .eq('objective_id', objectiveId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (unwrap(result) as MergeRequest | null) ?? null;
+}
+
+/** Asks the computer that ran it to merge and push. Idempotent while a
+ *  request is pending, so a retry is always safe. */
+export async function requestMerge(objectiveId: string): Promise<MergeRequest> {
+  const { data, error } = await supabase.rpc('request_merge', { p_objective_id: objectiveId });
+  if (error) throw new Error(error.message);
+  return data as MergeRequest;
+}
+
+/** Finished work still waiting for a merge — recent only, so long-finished
+ *  objectives that were never meant to be merged don't pile up as to-dos. */
+export const READY_TO_MERGE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+export async function fetchReadyToMerge(): Promise<Objective[]> {
+  const result = await supabase
+    .from('objectives')
+    .select('id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at')
+    .eq('status', 'done')
+    .is('merged_at', null)
+    .gte('updated_at', Date.now() - READY_TO_MERGE_WINDOW_MS)
+    .order('updated_at', { ascending: false });
+  return unwrap(result) as Objective[];
+}

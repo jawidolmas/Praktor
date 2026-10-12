@@ -2,10 +2,12 @@ import {
   CloudSync,
   SupabaseAnswerInbox,
   SupabaseCloudWriter,
+  SupabaseMergeInbox,
   createCloudClient,
   getHostStatus,
   loadCloudConfig,
   processAnswers,
+  processMerges,
   type CloudConfig,
   type SupabaseClient,
 } from "@exec/cloud";
@@ -27,9 +29,9 @@ const SYNC_EVERY_MS = 10_000;
 const BACKLOG_EVERY_MS = 1_000;
 const IDLE_RECHECK_MS = 60_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
-/** Answers arrive over Realtime the instant they're sent; this re-check is
- *  only the safety net for a dropped live connection. */
-const ANSWER_RECHECK_MS = 30_000;
+/** Answers and merge requests arrive over Realtime the instant they're
+ *  sent; this re-check is only the safety net for a dropped live connection. */
+const INBOX_RECHECK_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
@@ -123,11 +125,13 @@ export async function runCloudBridge(db: Db): Promise<never> {
 
     log(`syncing to ${new URL(latest.url).host}.`);
     const sync = new CloudSync(db, new SupabaseCloudWriter(client), { owner_id: host.ownerId, host_id: host.hostId });
-    const inbox = new SupabaseAnswerInbox(client, host.hostId);
+    const answers = new SupabaseAnswerInbox(client, host.hostId);
+    const merges = new SupabaseMergeInbox(client, host.hostId);
     const waker = new Waker();
-    const stopWatching = inbox.watch(() => waker.wake());
+    const stopAnswers = answers.watch(() => waker.wake());
+    const stopMerges = merges.watch(() => waker.wake());
     let nextSync = 0;
-    let nextAnswerCheck = 0;
+    let nextInboxCheck = 0;
 
     // Inner loop: apply answers the moment they arrive and sync on a steady
     // beat, until something goes wrong — then fall back out to re-check the
@@ -135,22 +139,25 @@ export async function runCloudBridge(db: Db): Promise<never> {
     try {
       for (;;) {
         try {
-          let applied = 0;
-          if (waker.flagged || Date.now() >= nextAnswerCheck) {
+          let changed = 0;
+          if (waker.flagged || Date.now() >= nextInboxCheck) {
             waker.flagged = false;
-            applied = await processAnswers(db, inbox);
-            nextAnswerCheck = Date.now() + ANSWER_RECHECK_MS;
+            const applied = await processAnswers(db, answers);
             if (applied > 0) console.log(`[cloud] applied ${applied} answer${applied === 1 ? "" : "s"} from the app.`);
+            const merged = await processMerges(db, merges);
+            if (merged > 0) console.log(`[cloud] merged ${merged} objective${merged === 1 ? "" : "s"} approved from the app.`);
+            changed = applied + merged;
+            nextInboxCheck = Date.now() + INBOX_RECHECK_MS;
           }
-          // An applied answer changes the decision: send it straight back so
-          // the phone sees "answered" within a second, not on the next beat.
-          if (applied > 0 || Date.now() >= nextSync) {
+          // An answer or a merge changes local state: send it straight back so
+          // the phone sees the result within a second, not on the next beat.
+          if (changed > 0 || Date.now() >= nextSync) {
             const report = await sync.syncOnce();
             nextSync = Date.now() + (report.backlog ? BACKLOG_EVERY_MS : SYNC_EVERY_MS);
           }
           if (backoff !== SYNC_EVERY_MS) log("relay reachable again — sync resumed.");
           backoff = SYNC_EVERY_MS;
-          await waker.sleep(Math.max(0, Math.min(nextSync, nextAnswerCheck) - Date.now()));
+          await waker.sleep(Math.max(0, Math.min(nextSync, nextInboxCheck) - Date.now()));
           if (!sameConfig(config, loadCloudConfig(db))) break;
         } catch (err) {
           log(`sync failed (${err instanceof Error ? err.message : String(err)}) — retrying with backoff.`);
@@ -160,7 +167,8 @@ export async function runCloudBridge(db: Db): Promise<never> {
         }
       }
     } finally {
-      stopWatching();
+      stopAnswers();
+      stopMerges();
     }
   }
 }
