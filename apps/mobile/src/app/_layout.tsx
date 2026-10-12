@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { AuthProvider, useSession } from '@/lib/auth';
+import { refreshPushRegistration, useNotificationRouting } from '@/lib/notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -15,6 +16,15 @@ function RootStack() {
   useEffect(() => {
     if (session !== undefined) SplashScreen.hideAsync();
   }, [session]);
+
+  // Tapped notifications open their screen; a signed-in launch quietly
+  // re-registers this phone, since push tokens can change.
+  useNotificationRouting(!!session);
+  const userId = session?.user.id;
+  useEffect(() => {
+    if (userId) refreshPushRegistration();
+  }, [userId]);
+
   if (session === undefined) return null;
 
   return (

@@ -4,6 +4,7 @@ import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
+import { disablePush } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 
 interface AuthState {
@@ -124,5 +125,7 @@ export async function signInWithGoogle(): Promise<SignInResult> {
 }
 
 export async function signOut(): Promise<void> {
+  // Stop notifications to this phone while the session can still say so.
+  await disablePush();
   await supabase.auth.signOut();
 }

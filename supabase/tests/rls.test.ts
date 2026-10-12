@@ -499,3 +499,63 @@ describe('host capabilities', () => {
     expect(await as(ownerA, 'select capabilities from public.hosts')).toEqual([{ capabilities: [] }]);
   });
 });
+
+describe('push devices', () => {
+  const TOKEN = 'ExponentPushToken[abcdefghijklmnopqrstuv]';
+  const register = (who: Who, token = TOKEN, name = 'iPhone') =>
+    as(who, 'select public.register_push_device($1, $2)', [token, name]);
+
+  beforeEach(async () => {
+    await claim(host1, ownerA);
+  });
+
+  it("lets the owner register a phone, readable by them and their computers only", async () => {
+    await register(ownerA);
+    expect(await as(ownerA, 'select token, device_name from public.push_devices')).toEqual([{ token: TOKEN, device_name: 'iPhone' }]);
+    expect(await as(host1, 'select token from public.push_devices')).toEqual([{ token: TOKEN }]);
+    expect(await as(ownerB, 'select token from public.push_devices')).toEqual([]);
+    await claim(host2, ownerB);
+    expect(await as(host2, 'select token from public.push_devices')).toEqual([]);
+  });
+
+  it('rejects anything that is not an Expo push token', async () => {
+    for (const bad of ['hello', 'ExponentPushToken[]', 'ExponentPushToken[a b]', `https://evil.example/${'x'.repeat(30)}`]) {
+      await expect(register(ownerA, bad)).rejects.toThrow();
+    }
+  });
+
+  it('refuses anonymous callers — a PC cannot register itself as a phone', async () => {
+    await expect(register(host1)).rejects.toThrow(/sign in/);
+    await expect(as('anon', `select public.register_push_device('${TOKEN}', 'x')`)).rejects.toThrow(/permission denied/);
+  });
+
+  it('moves a token to whichever account the phone is now signed into', async () => {
+    await register(ownerA);
+    await register(ownerB);
+    expect(await as(ownerA, 'select token from public.push_devices')).toEqual([]);
+    expect(await as(ownerB, 'select token from public.push_devices')).toEqual([{ token: TOKEN }]);
+  });
+
+  it('lets the owner unregister, but not someone else', async () => {
+    await register(ownerA);
+    await as(ownerB, 'select public.unregister_push_device($1)', [TOKEN]);
+    expect(await as(ownerA, 'select token from public.push_devices')).toHaveLength(1);
+    await as(ownerA, 'select public.unregister_push_device($1)', [TOKEN]);
+    expect(await as(ownerA, 'select token from public.push_devices')).toEqual([]);
+  });
+
+  it("lets a computer drop its owner's dead token, but not another owner's", async () => {
+    await register(ownerB, 'ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbbbb]');
+    await register(ownerA);
+    await as(host1, 'select public.drop_push_device($1)', ['ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbbbb]']);
+    expect(await as(ownerB, 'select token from public.push_devices')).toHaveLength(1);
+    await as(host1, 'select public.drop_push_device($1)', [TOKEN]);
+    expect(await as(ownerA, 'select token from public.push_devices')).toEqual([]);
+  });
+
+  it('cannot be written directly', async () => {
+    await expect(
+      as(ownerA, 'insert into public.push_devices (token, owner_id) values ($1, $2)', [TOKEN, OWNER_A]),
+    ).rejects.toThrow(/permission denied/);
+  });
+});

@@ -1,12 +1,14 @@
 import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { IconTile, Row, Section } from '@/components/ui';
 import { C, Space, Type } from '@/constants/theme';
 import { signOut, useSession } from '@/lib/auth';
 import { hostState, timeAgo, type HostState } from '@/lib/format';
+import { disablePush, enablePush, pushStatus, pushSupport, type PushStatus } from '@/lib/notifications';
 import { fetchHosts, revokeHost, useLive, type Host } from '@/lib/relay';
 
 const STATE: Record<HostState, { label: (h: Host) => string; color: typeof C.green }> = {
@@ -44,6 +46,75 @@ function confirmSignOut() {
     { text: 'Cancel', style: 'cancel' },
     { text: 'Sign Out', style: 'destructive', onPress: () => signOut() },
   ]);
+}
+
+function NotificationsSection() {
+  const support = pushSupport();
+  const [status, setStatus] = useState<PushStatus | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => {
+    if (support === 'ok') pushStatus().then(setStatus);
+  }, [support]);
+  useFocusEffect(refresh);
+
+  if (support !== 'ok') {
+    return (
+      <Section
+        title="Notifications"
+        footer={
+          support === 'expo-go'
+            ? 'Notifications need the Praktor app itself — Expo Go can’t receive them. They switch on once you install the development build.'
+            : 'Notifications need a real iPhone.'
+        }>
+        <Row title="Notify me" subtitle="Not available here" leading={<IconTile symbol="bell.fill" color={C.gray} />} />
+      </Section>
+    );
+  }
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    if (next) {
+      const result = await enablePush();
+      if (!result.ok && result.reason === 'denied') {
+        Alert.alert('Notifications are off', 'Turn on notifications for Praktor in iOS Settings to be told when it needs you.', [
+          { text: 'Not Now', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]);
+      } else if (!result.ok) {
+        Alert.alert('Couldn’t turn on notifications', 'Check your connection and try again.');
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } else {
+      await disablePush();
+    }
+    setBusy(false);
+    refresh();
+  }
+
+  return (
+    <Section
+      title="Notifications"
+      footer="Praktor tells you when a decision needs you, when work is ready to merge, and when something fails. Notifications show titles only — never code.">
+      <Row
+        title="Notify me"
+        subtitle={status === 'denied' ? 'Off in iOS Settings — tap to open' : undefined}
+        leading={<IconTile symbol="bell.fill" color={C.red} />}
+        onPress={status === 'denied' ? () => Linking.openSettings() : undefined}
+        trailing={
+          status === 'denied' ? undefined : (
+            <Switch
+              value={status === 'on'}
+              disabled={busy || status === undefined}
+              onValueChange={toggle}
+              accessibilityLabel="Notify me"
+            />
+          )
+        }
+      />
+    </Section>
+  );
 }
 
 export default function Computers() {
@@ -99,6 +170,8 @@ export default function Computers() {
           ))}
         </Section>
       ) : null}
+
+      <NotificationsSection />
 
       <Section title="Account">
         <Row title={name} leading={<IconTile symbol="person.fill" color={C.gray} />} />

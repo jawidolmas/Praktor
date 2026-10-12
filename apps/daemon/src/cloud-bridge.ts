@@ -3,11 +3,13 @@ import {
   SupabaseAnswerInbox,
   SupabaseCloudWriter,
   SupabaseMergeInbox,
+  SupabasePushOutbox,
   createCloudClient,
   getHostStatus,
   loadCloudConfig,
   processAnswers,
   processMerges,
+  processPush,
   type CloudConfig,
   type SupabaseClient,
 } from "@exec/cloud";
@@ -127,6 +129,7 @@ export async function runCloudBridge(db: Db): Promise<never> {
     const sync = new CloudSync(db, new SupabaseCloudWriter(client), { owner_id: host.ownerId, host_id: host.hostId });
     const answers = new SupabaseAnswerInbox(client, host.hostId);
     const merges = new SupabaseMergeInbox(client, host.hostId);
+    const push = new SupabasePushOutbox(client);
     const waker = new Waker();
     const stopAnswers = answers.watch(() => waker.wake());
     const stopMerges = merges.watch(() => waker.wake());
@@ -154,6 +157,15 @@ export async function runCloudBridge(db: Db): Promise<never> {
           if (changed > 0 || Date.now() >= nextSync) {
             const report = await sync.syncOnce();
             nextSync = Date.now() + (report.backlog ? BACKLOG_EVERY_MS : SYNC_EVERY_MS);
+            // After the sync, so a notification never opens a screen whose
+            // data hasn't reached the phone yet. Its own failures are logged
+            // and retried next pass; they never interrupt syncing.
+            try {
+              const pushed = await processPush(db, push, host.hostId);
+              if (pushed > 0) console.log(`[cloud] sent ${pushed} notification${pushed === 1 ? "" : "s"} to your phone.`);
+            } catch (err) {
+              log(`notifications failed (${err instanceof Error ? err.message : String(err)}) — will retry.`);
+            }
           }
           if (backoff !== SYNC_EVERY_MS) log("relay reachable again — sync resumed.");
           backoff = SYNC_EVERY_MS;

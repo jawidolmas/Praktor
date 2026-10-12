@@ -6,6 +6,7 @@ import type { CloudConfig } from "./config.js";
 import type { AnswerInbox, PendingAnswer } from "./answers.js";
 import { AGENT_VERSION, HOST_CAPABILITIES } from "./capabilities.js";
 import type { MergeInbox, PendingMerge } from "./merge.js";
+import type { PushOutbox } from "./push.js";
 import type { CloudTable, CloudWriter } from "./sync.js";
 
 /**
@@ -206,5 +207,21 @@ export class SupabaseMergeInbox implements MergeInbox {
     return () => {
       void this.client.removeChannel(channel);
     };
+  }
+}
+
+/** The owner's registered phones, as this computer is allowed to see them. */
+export class SupabasePushOutbox implements PushOutbox {
+  constructor(private readonly client: SupabaseClient) {}
+
+  async tokens(): Promise<string[]> {
+    const { data, error } = await this.client.from("push_devices").select("token");
+    if (error) throw new Error(`push_devices: ${error.message}`);
+    return (data as { token: string }[]).map((d) => d.token);
+  }
+
+  async drop(token: string): Promise<void> {
+    const { error } = await this.client.rpc("drop_push_device", { p_token: token });
+    if (error) throw new Error(`drop push device: ${error.message}`);
   }
 }

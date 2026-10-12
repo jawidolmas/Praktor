@@ -35,6 +35,12 @@
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "enableBackgroundRemoteNotifications": false
+        }
       ]
     ],
     "experiments": {
@@ -43,6 +49,13 @@
     },
     "platforms": [
       "ios"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f7181f6d-8f06-4a54-9c6f-654e200c60eb"
+      }
+    },
+    "owner": "jawidolmas"
   }
 }
