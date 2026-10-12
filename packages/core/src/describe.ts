@@ -87,6 +87,12 @@ export function describeEvent(payload: EventPayload): EventDisplay {
         text: payload.passed ? "Acceptance passed" : `Acceptance failed: ${payload.failedLabels.join(", ")}`,
       };
 
+    case "review.unavailable":
+      return {
+        kind: "warn",
+        text: `Not reviewed — the judge failed ${payload.attempts} time${payload.attempts === 1 ? "" : "s"} (${truncate(payload.error, 160)}). Acceptance checks passed; read the change before merging.`,
+      };
+
     case "review.result": {
       const missing = payload.missing.length ? ` (missing: ${payload.missing.join(", ")})` : "";
       return {

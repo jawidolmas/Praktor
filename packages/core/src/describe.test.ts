@@ -29,12 +29,20 @@ describe("describeEvent", () => {
       { type: "run.progress", milestone: "m", detail: "" },
       { type: "note", message: "n" },
       { type: "objective.approved", branch: "exec/abc-attempt-1", baseRef: "main", pushed: true, approvedBy: "dashboard" },
+      { type: "review.unavailable", attempts: 3, error: "The reviewer finished without calling submit_review." },
     ];
     for (const payload of samples) {
       const display = describeEvent(payload);
       expect(display.text.length).toBeGreaterThan(0);
       expect(["info", "success", "warn", "error", "muted"]).toContain(display.kind);
     }
+  });
+
+  it("never lets an unreviewed attempt read as accepted", () => {
+    const d = describeEvent({ type: "review.unavailable", attempts: 3, error: "no verdict" });
+    expect(d.kind).toBe("warn");
+    expect(d.text).toMatch(/^Not reviewed/);
+    expect(d.text).not.toMatch(/accepted/i);
   });
 
   it("marks a policy denial as an error and includes the target and key", () => {

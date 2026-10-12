@@ -33,6 +33,7 @@ import {
   type Run,
   type Task,
 } from '@/lib/relay';
+import { reviewState } from '@/lib/review';
 import { buildTree, mergeByPath, summarize } from '@/lib/tree';
 
 const TABS = ['Tasks', 'Files', 'Activity'] as const;
@@ -118,6 +119,7 @@ function ReadyToMerge({
   detail,
   request,
   verdicts,
+  unreviewed,
   computerOffline,
   onMerge,
   busy,
@@ -125,6 +127,7 @@ function ReadyToMerge({
   detail: ObjectiveDetail;
   request: MergeRequest | null;
   verdicts: ActivityEvent[];
+  unreviewed: ActivityEvent[];
   computerOffline: boolean;
   onMerge: () => void;
   busy: boolean;
@@ -183,6 +186,20 @@ function ReadyToMerge({
           {files ? `${files} ${files === 1 ? 'file' : 'files'} changed` : 'Changes'} by {doneTasks}{' '}
           {doneTasks === 1 ? 'task' : 'tasks'}, merged into the branch checked out in {o.repo_name}, then pushed.
         </Text>
+      ) : null}
+      {mergeable && unreviewed.length > 0 ? (
+        <View style={styles.unreviewed} accessibilityRole="alert">
+          <SymbolView name="exclamationmark.shield.fill" size={18} tintColor={C.orange} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={styles.unreviewedTitle}>
+              {unreviewed.length === 1 ? 'Not reviewed by the judge' : `${unreviewed.length} tasks not reviewed by the judge`}
+            </Text>
+            <Text style={styles.unreviewedText}>
+              The independent review failed, so nothing has checked this work beyond its acceptance checks. Read the
+              change on your computer before merging.
+            </Text>
+          </View>
+        </View>
       ) : null}
       {mergeable && verdicts.length > 0 ? (
         <View style={styles.verdicts}>
@@ -373,7 +390,7 @@ export default function ObjectiveScreen() {
     return hosts.data.find((h) => h.id === d.objective.host_id)?.name;
   }, [d, hosts.data]);
   const openDecisions = (d?.decisions ?? []).filter((x) => x.status === 'open');
-  const verdicts = (events.data ?? []).filter((e) => e.type === 'review.result' && e.kind === 'success');
+  const { verdicts, unreviewed } = useMemo(() => reviewState(events.data ?? []), [events.data]);
   const host = d ? hosts.data?.find((h) => h.id === d.objective.host_id) : undefined;
   const computerOffline = host ? hostState(host) !== 'online' : false;
 
@@ -461,6 +478,7 @@ export default function ObjectiveScreen() {
               detail={d}
               request={merge.data ?? null}
               verdicts={verdicts}
+              unreviewed={unreviewed}
               computerOffline={computerOffline}
               onMerge={confirmMerge}
               busy={merging}
@@ -556,6 +574,17 @@ const styles = StyleSheet.create({
   verdicts: { gap: 6 },
   verdict: { flexDirection: 'row', gap: Space.s, alignItems: 'flex-start' },
   verdictText: { ...Type.footnote, color: C.label, flex: 1 },
+  unreviewed: {
+    flexDirection: 'row',
+    gap: Space.s,
+    alignItems: 'flex-start',
+    padding: Space.m,
+    borderRadius: Radius.control,
+    borderCurve: 'continuous',
+    backgroundColor: C.fill,
+  },
+  unreviewedTitle: { ...Type.subheadline, fontWeight: '600', color: C.label },
+  unreviewedText: { ...Type.footnote, color: C.secondaryLabel },
   mergeStatus: { flexDirection: 'row', alignItems: 'center', gap: Space.m },
   mergeStatusText: { ...Type.subheadline, color: C.label, flex: 1 },
   mergeNote: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' },

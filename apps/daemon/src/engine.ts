@@ -54,6 +54,7 @@ import {
 } from "@exec/worker";
 import { sendDecisionPacket } from "./decision-packet.js";
 import { renderReport, type AttemptSummary } from "./report.js";
+import { reviewWithRetry } from "./review-retry.js";
 
 /**
  * The task-execution engine — extracted, unchanged in substance, from what
@@ -542,8 +543,8 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
     if (verify?.passed) {
       const attemptCommitted = commitAll(worktree.path, `${task.title}\n\n${result.resultText ?? ""}`.trim());
 
-      try {
-        const reviewResult = await review({
+      const reviewTry = await reviewWithRetry(() =>
+        review({
           taskTitle: task.title,
           intent: task.intent,
           worktreePath: worktree.path,
@@ -552,7 +553,20 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
           model: task.model,
           profile,
           ...(graph.available ? { graphPath: graph.graphPath } : {}),
+        }),
+      );
+      // Every failed try is a real failed brain call — counted, so health
+      // stats don't hide a flaky judge behind its eventual success.
+      for (const _failure of reviewTry.failures) {
+        appendEvent(db, {
+          objectiveId: objective.id,
+          taskId: task.id,
+          runId,
+          payload: { type: "brain.call", site: "review", ok: false, durationMs: 0, model: task.model },
         });
+      }
+      if (reviewTry.ok) {
+        const reviewResult = reviewTry.value;
         reviewOutcome = reviewResult.review;
         appendEvent(db, {
           objectiveId: objective.id,
@@ -574,18 +588,22 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
             costUsdEstimate: reviewResult.costUsdEstimate,
           },
         });
-      } catch (err) {
-        // Fail open, matching the one existing precedent for a brain-call
-        // failure (plan.ts's decompose fallback): a transient API hiccup
-        // during an unattended run must never be a new way for an objective
-        // to wedge itself, so this reduces to today's mechanical-only
-        // behavior rather than blocking.
-        console.error(`[${objective.id.slice(0, 8)}] review failed, treating this attempt as accepted:`, err);
+      } else {
+        // Still fail open on the *flow* — a flaky judge must never be a new
+        // way for an unattended objective to wedge itself, and the attempt's
+        // acceptance checks did pass — but never silently: the attempt is
+        // recorded as unreviewed, and the dashboard and the phone say so
+        // before anyone merges it.
+        const lastError = reviewTry.failures[reviewTry.failures.length - 1] ?? "unknown error";
+        console.error(
+          `[${objective.id.slice(0, 8)}] review failed ${reviewTry.failures.length}x, continuing as UNREVIEWED: ${lastError}`,
+        );
         appendEvent(db, {
           objectiveId: objective.id,
           taskId: task.id,
           runId,
-          payload: { type: "brain.call", site: "review", ok: false, durationMs: 0, model: task.model },
+          level: "warn",
+          payload: { type: "review.unavailable", attempts: reviewTry.failures.length, error: lastError.slice(0, 500) },
         });
         reviewOutcome = { verdict: "accept", reasons: [], missing: [] };
       }

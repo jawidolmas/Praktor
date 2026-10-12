@@ -151,6 +151,16 @@ const ReviewResult = z.object({
   costUsdEstimate: z.number().optional(),
 });
 
+/** The independent judge couldn't deliver a verdict after every retry. The
+ *  attempt still proceeds on its passing acceptance checks — an unattended
+ *  objective must not wedge on a flaky review — but it is explicitly
+ *  *unreviewed*, never silently recorded as accepted. */
+const ReviewUnavailable = z.object({
+  type: z.literal("review.unavailable"),
+  attempts: z.number().int(),
+  error: z.string(),
+});
+
 /** The failure-classifier's read on why an attempt didn't make it, and what
  *  the supervisor should do next — see `DiagnoseOutput` in contracts.ts.
  *  `usage`/`costUsdEstimate`/`model` optional for the same reason as
@@ -257,6 +267,7 @@ export const EventPayloadSchema = z.discriminatedUnion("type", [
   VerifyCheck,
   VerifyResult,
   ReviewResult,
+  ReviewUnavailable,
   DiagnoseResult,
   DecisionRaised,
   DecisionAnswered,
