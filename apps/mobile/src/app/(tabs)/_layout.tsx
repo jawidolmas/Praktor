@@ -21,6 +21,10 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf={{ default: 'bubble.left.and.exclamationmark.bubble.right', selected: 'bubble.left.and.exclamationmark.bubble.right.fill' }} />
         {waiting > 0 ? <NativeTabs.Trigger.Badge>{String(waiting)}</NativeTabs.Trigger.Badge> : null}
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="insights">
+        <NativeTabs.Trigger.Label>Insights</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'chart.bar', selected: 'chart.bar.fill' }} />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="computers">
         <NativeTabs.Trigger.Label>Computers</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="desktopcomputer" />

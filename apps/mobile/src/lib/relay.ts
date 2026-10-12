@@ -399,3 +399,49 @@ export async function fetchReadyToMerge(): Promise<Objective[]> {
     .order('updated_at', { ascending: false });
   return unwrap(result) as Objective[];
 }
+
+export interface HealthSnapshot {
+  health: { buildPct?: number; testsPct?: number; securityPct?: number };
+  recovered: { taskTitle: string; objectiveTitle: string; cause: string; class: string }[];
+  windowMs: number;
+}
+
+export interface CostSnapshot {
+  totalCostUsd: number;
+  workerCostUsd: number;
+  judgeCostUsd: number;
+  diagnoserCostUsd: number;
+}
+
+export interface Insights {
+  runs: { started_at: number; cost_usd: number; model: string }[];
+  /** Summed across computers. */
+  costs: CostSnapshot | null;
+  /** The most recently updated computer's view. */
+  health: HealthSnapshot | null;
+}
+
+export const INSIGHTS_WINDOW_DAYS = 30;
+
+export async function fetchInsights(): Promise<Insights> {
+  const since = Date.now() - INSIGHTS_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const [runs, snapshots] = await Promise.all([
+    supabase.from('runs').select('started_at, cost_usd, model').gte('started_at', since).limit(10000),
+    supabase.from('snapshots').select('kind, data, updated_at').in('kind', ['costs', 'health']).order('updated_at', { ascending: false }),
+  ]);
+  const snaps = unwrap(snapshots) as { kind: string; data: unknown; updated_at: number }[];
+
+  const costRows = snaps.filter((x) => x.kind === 'costs').map((x) => x.data as Partial<CostSnapshot>);
+  const sum = (field: keyof CostSnapshot) => costRows.reduce((total, c) => total + (c[field] ?? 0), 0);
+  const costs: CostSnapshot | null = costRows.length
+    ? {
+        totalCostUsd: sum('totalCostUsd'),
+        workerCostUsd: sum('workerCostUsd'),
+        judgeCostUsd: sum('judgeCostUsd'),
+        diagnoserCostUsd: sum('diagnoserCostUsd'),
+      }
+    : null;
+  const health = (snaps.find((x) => x.kind === 'health')?.data as HealthSnapshot | undefined) ?? null;
+
+  return { runs: unwrap(runs) as Insights['runs'], costs, health };
+}
