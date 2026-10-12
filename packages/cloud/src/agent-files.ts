@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { eq } from "drizzle-orm";
-import { objectives, runs, tasks, type Db } from "@exec/db";
+import { and, desc, eq } from "drizzle-orm";
+import { artifacts, objectives, runs, tasks, writeArtifact, type Db } from "@exec/db";
 import { attemptBranchName, resolveBaseBranch } from "@exec/worker";
 
 /**
@@ -61,6 +61,65 @@ export function parseNameStatusZ(output: string): FileChange[] {
   return changes;
 }
 
+/** Artifact kind holding the paths an accepted attempt changed. */
+export const CHANGED_FILES_ARTIFACT = "changed-files";
+
+interface ChangedFilesRecord {
+  attempt: number;
+  changes: FileChange[];
+  truncated: boolean;
+}
+
+/**
+ * Saves which paths an accepted attempt changed, read from the attempt's
+ * own worktree the moment it's accepted. Branches don't live forever — once
+ * merged and cleaned up, there's nothing left to diff — so this record is
+ * what keeps an objective's file tree browsable afterwards. Names and change
+ * letters only, never contents. Never throws: losing this record must not
+ * fail a run that otherwise succeeded.
+ */
+export function recordChangedFiles(
+  db: Db,
+  args: { objectiveId: string; taskId: string; runId: string; attempt: number; worktreePath: string; baseSha: string },
+): boolean {
+  try {
+    if (args.baseSha.startsWith("-")) return false;
+    const all = parseNameStatusZ(gitRead(args.worktreePath, ["diff", "--name-status", "-z", args.baseSha, "HEAD"]));
+    const record: ChangedFilesRecord = {
+      attempt: args.attempt,
+      changes: all.slice(0, MAX_CHANGES_PER_TASK),
+      truncated: all.length > MAX_CHANGES_PER_TASK,
+    };
+    writeArtifact(db, {
+      kind: CHANGED_FILES_ARTIFACT,
+      objectiveId: args.objectiveId,
+      taskId: args.taskId,
+      runId: args.runId,
+      content: record as unknown as Record<string, unknown>,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The saved record for exactly this attempt, if one was made. */
+function savedChangedFiles(db: Db, taskId: string, attempt: number): ChangedFilesRecord | undefined {
+  const rows = db
+    .select()
+    .from(artifacts)
+    .where(and(eq(artifacts.kind, CHANGED_FILES_ARTIFACT), eq(artifacts.taskId, taskId)))
+    .orderBy(desc(artifacts.createdAt))
+    .all();
+  for (const row of rows) {
+    const c = row.content as unknown as Partial<ChangedFilesRecord>;
+    if (c && c.attempt === attempt && Array.isArray(c.changes)) {
+      return { attempt, changes: c.changes, truncated: c.truncated === true };
+    }
+  }
+  return undefined;
+}
+
 /** For each task that has started at least one attempt, the paths its most
  *  recent attempt changed against the objective's base. A branch that's
  *  gone (merged and cleaned up) comes back `available: false`, so the caller
@@ -89,7 +148,13 @@ export function agentFilesFor(db: Db, objectiveId: string): TaskFiles[] {
       const attempt = latestAttempt.get(t.id)!;
       const branch = attemptBranchName(t.id, attempt);
       const missing = { taskId: t.id, attempt, branch, available: false, changes: [], truncated: false };
-      if (!baseIsSafe) return missing;
+      // Once the branch is gone (merged, cleaned up), fall back to what was
+      // recorded when the attempt was accepted.
+      const fromRecord = (): TaskFiles => {
+        const saved = savedChangedFiles(db, t.id, attempt);
+        return saved ? { ...missing, available: true, changes: saved.changes, truncated: saved.truncated } : missing;
+      };
+      if (!baseIsSafe) return fromRecord();
       try {
         gitRead(objective.repoPath, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
         const all = parseNameStatusZ(gitRead(objective.repoPath, ["diff", "--name-status", "-z", `${base}...${branch}`]));
@@ -100,7 +165,7 @@ export function agentFilesFor(db: Db, objectiveId: string): TaskFiles[] {
           truncated: all.length > MAX_CHANGES_PER_TASK,
         };
       } catch {
-        return missing;
+        return fromRecord();
       }
     });
 }

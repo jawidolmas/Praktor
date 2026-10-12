@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { newId } from "@exec/core";
 import { objectives, openDb, runMigrations, runs, tasks, type Db } from "@exec/db";
 import { attemptBranchName } from "@exec/worker";
-import { agentFilesFor, parseNameStatusZ } from "./agent-files.js";
+import { agentFilesFor, parseNameStatusZ, recordChangedFiles } from "./agent-files.js";
 
 describe("parseNameStatusZ", () => {
   it("parses plain changes and renames, including paths with spaces", () => {
@@ -81,6 +81,40 @@ describe("agentFilesFor", () => {
         { status: "M", path: "README.md" },
       ]),
     );
+  });
+
+  it("keeps the file list after the branch is gone, from what was recorded at acceptance", () => {
+    const { objectiveId, taskId } = seed(1);
+    const branch = attemptBranchName(taskId, 1);
+    const baseSha = execFileSync("git", ["-C", repo, "rev-parse", "main"], { encoding: "utf8" }).trim();
+    git("checkout", "-q", "-b", branch);
+    writeFileSync(join(repo, "kept.ts"), "export {}\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "work");
+
+    // Recorded from the attempt's worktree (here, the repo on its branch).
+    expect(recordChangedFiles(db, { objectiveId, taskId, runId: "r1", attempt: 1, worktreePath: repo, baseSha })).toBe(true);
+
+    // The branch is merged and cleaned up — nothing left to diff.
+    git("checkout", "-q", "main");
+    git("branch", "-q", "-D", branch);
+
+    const [files] = agentFilesFor(db, objectiveId);
+    expect(files).toMatchObject({ available: true, attempt: 1 });
+    expect(files!.changes).toEqual([{ status: "A", path: "kept.ts" }]);
+  });
+
+  it("never uses a record from a different attempt", () => {
+    const { objectiveId, taskId } = seed(2);
+    const baseSha = execFileSync("git", ["-C", repo, "rev-parse", "main"], { encoding: "utf8" }).trim();
+    recordChangedFiles(db, { objectiveId, taskId, runId: "r1", attempt: 1, worktreePath: repo, baseSha });
+    expect(agentFilesFor(db, objectiveId)[0]).toMatchObject({ available: false });
+  });
+
+  it("never throws when recording fails", () => {
+    expect(
+      recordChangedFiles(db, { objectiveId: "o", taskId: "t", runId: "r", attempt: 1, worktreePath: "/no/such/dir", baseSha: "HEAD" }),
+    ).toBe(false);
   });
 
   it("reports a branch that no longer exists as unavailable", () => {

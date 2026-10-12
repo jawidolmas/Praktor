@@ -55,6 +55,7 @@ import {
 import { sendDecisionPacket } from "./decision-packet.js";
 import { renderReport, type AttemptSummary } from "./report.js";
 import { reviewWithRetry } from "./review-retry.js";
+import { recordChangedFiles } from "@exec/cloud";
 
 /**
  * The task-execution engine — extracted, unchanged in substance, from what
@@ -612,6 +613,16 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
         committed = attemptCommitted;
         finalStatus = "done";
         setTaskStatus(db, task.id, "done");
+        // Keep the list of changed paths past this branch's lifetime, so the
+        // app can still show what this task built after it's merged.
+        recordChangedFiles(db, {
+          objectiveId: objective.id,
+          taskId: task.id,
+          runId,
+          attempt,
+          worktreePath: worktree.path,
+          baseSha: worktree.baseSha,
+        });
 
         // Fold this task's branch into the objective's integration branch so a
         // task that depends on this one actually sees these files in its own
