@@ -128,3 +128,9 @@ export function answeredVia(answeredBy: string | null): string {
   if (by.includes('cli') || by.includes('terminal')) return 'in the terminal';
   return by ? `by ${by}` : '';
 }
+
+export type HostCapability = 'answers' | 'merges';
+
+export function hostCan(host: Host, capability: HostCapability): boolean {
+  return (host.capabilities ?? []).includes(capability);
+}

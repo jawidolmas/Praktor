@@ -14,6 +14,10 @@ export interface Host {
   created_at: string;
   last_seen_at: string | null;
   revoked_at: string | null;
+  /** What this computer's running Praktor can do (e.g. "answers",
+   *  "merges"); empty for builds from before it reported this. */
+  capabilities: string[];
+  agent_version: string | null;
 }
 
 export type ObjectiveStatus = 'draft' | 'active' | 'parked' | 'blocked' | 'done' | 'failed' | 'cancelled';
@@ -35,7 +39,7 @@ export interface Objective {
 export async function fetchHosts(): Promise<Host[]> {
   const { data, error } = await supabase
     .from('hosts')
-    .select('id, owner_id, name, created_at, last_seen_at, revoked_at')
+    .select('id, owner_id, name, created_at, last_seen_at, revoked_at, capabilities, agent_version')
     .order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return data as Host[];

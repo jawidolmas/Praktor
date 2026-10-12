@@ -5,6 +5,7 @@ import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ComputerNotice } from '@/components/computer-notice';
 import { FileTree } from '@/components/file-tree';
 import { EmptyState, PrimaryButton, Section, StatusPill } from '@/components/ui';
 import { C, Radius, Space, Type } from '@/constants/theme';
@@ -13,7 +14,6 @@ import {
   clockTime,
   duration,
   eventLook,
-  hostState,
   money,
   objectiveLook,
   taskLook,
@@ -28,6 +28,7 @@ import {
   useLive,
   type ActivityEvent,
   type Decision,
+  type Host,
   type MergeRequest,
   type ObjectiveDetail,
   type Run,
@@ -120,7 +121,7 @@ function ReadyToMerge({
   request,
   verdicts,
   unreviewed,
-  computerOffline,
+  host,
   onMerge,
   busy,
 }: {
@@ -128,7 +129,7 @@ function ReadyToMerge({
   request: MergeRequest | null;
   verdicts: ActivityEvent[];
   unreviewed: ActivityEvent[];
-  computerOffline: boolean;
+  host: Host | undefined;
   onMerge: () => void;
   busy: boolean;
 }) {
@@ -151,9 +152,7 @@ function ReadyToMerge({
     status = (
       <View style={styles.mergeStatus} accessibilityLiveRegion="polite">
         <ActivityIndicator />
-        <Text style={styles.mergeStatusText}>
-          {computerOffline ? 'Your computer is offline — it merges as soon as it’s back.' : 'Merging on your computer…'}
-        </Text>
+        <Text style={styles.mergeStatusText}>Merging on {host?.name ?? 'your computer'}…</Text>
       </View>
     );
   } else if (request?.status === 'merged' && settledRecently) {
@@ -214,6 +213,13 @@ function ReadyToMerge({
         </View>
       ) : null}
       {status}
+      {mergeable || request?.status === 'pending' ? (
+        <ComputerNotice
+          host={host}
+          capability="merges"
+          pendingSince={request?.status === 'pending' ? request.created_at : null}
+        />
+      ) : null}
       {mergeable && request?.status !== 'pending' ? (
         <>
           <View style={styles.mergeNote}>
@@ -392,7 +398,6 @@ export default function ObjectiveScreen() {
   const openDecisions = (d?.decisions ?? []).filter((x) => x.status === 'open');
   const { verdicts, unreviewed } = useMemo(() => reviewState(events.data ?? []), [events.data]);
   const host = d ? hosts.data?.find((h) => h.id === d.objective.host_id) : undefined;
-  const computerOffline = host ? hostState(host) !== 'online' : false;
 
   // Celebrate once, the moment the computer confirms the merge.
   const lastMergeStatus = useRef(merge.data?.status);
@@ -479,7 +484,7 @@ export default function ObjectiveScreen() {
               request={merge.data ?? null}
               verdicts={verdicts}
               unreviewed={unreviewed}
-              computerOffline={computerOffline}
+              host={host}
               onMerge={confirmMerge}
               busy={merging}
             />

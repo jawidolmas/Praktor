@@ -4,6 +4,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { execHome } from "@exec/db";
 import type { CloudConfig } from "./config.js";
 import type { AnswerInbox, PendingAnswer } from "./answers.js";
+import { AGENT_VERSION, HOST_CAPABILITIES } from "./capabilities.js";
 import type { MergeInbox, PendingMerge } from "./merge.js";
 import type { CloudTable, CloudWriter } from "./sync.js";
 
@@ -114,7 +115,10 @@ export class SupabaseCloudWriter implements CloudWriter {
   }
 
   async heartbeat(): Promise<void> {
-    const { error } = await this.client.rpc("host_heartbeat");
+    const { error } = await this.client.rpc("host_heartbeat", {
+      p_capabilities: [...HOST_CAPABILITIES],
+      p_version: AGENT_VERSION,
+    });
     if (error) throw new Error(`heartbeat: ${error.message}`);
   }
 }

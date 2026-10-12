@@ -4,9 +4,10 @@ import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ComputerNotice } from '@/components/computer-notice';
 import { EmptyState, PrimaryButton } from '@/components/ui';
 import { C, Radius, Space, Type } from '@/constants/theme';
-import { answeredVia, hostState, timeAgo } from '@/lib/format';
+import { answeredVia, timeAgo } from '@/lib/format';
 import {
   fetchDecision,
   fetchHosts,
@@ -73,7 +74,7 @@ function OptionCard({
 }
 
 /** What happened to an answer sent from this app, live. */
-function AnswerStatus({ answer, label, offline }: { answer: DecisionAnswer; label: string; offline: boolean }) {
+function AnswerStatus({ answer, label }: { answer: DecisionAnswer; label: string }) {
   const look =
     answer.status === 'applied'
       ? { symbol: 'checkmark.circle.fill' as const, color: C.green, title: `Answered “${label}”`, body: 'Applied on your computer. The agent is carrying on.' }
@@ -83,9 +84,7 @@ function AnswerStatus({ answer, label, offline }: { answer: DecisionAnswer; labe
             symbol: undefined,
             color: C.secondaryLabel,
             title: `Sending “${label}”…`,
-            body: offline
-              ? 'Your computer is offline. It applies the answer as soon as it’s back.'
-              : 'Waiting for your computer to apply it.',
+            body: 'Waiting for your computer to apply it.',
           };
   return (
     <View style={[styles.status, { borderColor: look.color }]} accessibilityLiveRegion="polite">
@@ -115,7 +114,6 @@ export default function DecisionScreen() {
   const d: Decision | undefined = detail.data?.decision;
   const answer = detail.data?.answer ?? null;
   const host = hosts.data?.find((h) => h.id === d?.host_id);
-  const offline = host ? hostState(host) !== 'online' : false;
 
   // Pre-select the agent's recommendation — the most likely answer is one
   // tap away, but nothing is sent without an explicit confirm.
@@ -219,7 +217,12 @@ export default function DecisionScreen() {
 
         {answer ? (
           <View style={styles.statusWrap}>
-            <AnswerStatus answer={answer} label={chosenLabel(answer.answer)} offline={offline} />
+            <AnswerStatus answer={answer} label={chosenLabel(answer.answer)} />
+            {answer.status === 'pending' ? (
+              <View style={{ marginTop: Space.m }}>
+                <ComputerNotice host={host} capability="answers" pendingSince={answer.created_at} />
+              </View>
+            ) : null}
           </View>
         ) : d.status !== 'open' ? (
           <View style={styles.statusWrap}>
@@ -263,9 +266,7 @@ export default function DecisionScreen() {
                 onPress={() => selectedOption && confirmAndSend(selectedOption)}
               />
             )}
-            {offline ? (
-              <Text style={styles.sendNote}>Your computer is offline — it applies the answer when it’s back.</Text>
-            ) : null}
+            <ComputerNotice host={host} capability="answers" />
           </View>
         ) : null}
       </>
@@ -340,5 +341,4 @@ const styles = StyleSheet.create({
   pointText: { ...Type.subheadline, color: C.secondaryLabel, flex: 1 },
 
   send: { marginHorizontal: Space.l, marginTop: Space.xl, gap: Space.s, alignItems: 'stretch' },
-  sendNote: { ...Type.footnote, color: C.secondaryLabel, textAlign: 'center' },
 });

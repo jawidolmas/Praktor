@@ -455,3 +455,47 @@ describe('merge requests', () => {
     expect(await as(ownerB, 'select status from public.merge_requests')).toEqual([]);
   });
 });
+
+describe('host capabilities', () => {
+  beforeEach(async () => {
+    await claim(host1, ownerA);
+  });
+
+  it('records what the running daemon can do, readable by its owner', async () => {
+    await as(host1, 'select public.host_heartbeat($1::text[], $2)', [['answers', 'merges'], '0.2.1']);
+    expect(await as(ownerA, 'select capabilities, agent_version from public.hosts')).toEqual([
+      { capabilities: ['answers', 'merges'], agent_version: '0.2.1' },
+    ]);
+  });
+
+  it('starts empty for daemons that never report (older builds)', async () => {
+    await as(host1, 'select public.host_heartbeat()');
+    expect(await as(ownerA, 'select capabilities from public.hosts')).toEqual([{ capabilities: [] }]);
+  });
+
+  it('bounds what a host can write into its own row', async () => {
+    const many = Array.from({ length: 40 }, (_, i) => `cap${i}`);
+    await as(host1, 'select public.host_heartbeat($1::text[], $2)', [[...many, '', 'x'.repeat(100)], 'v'.repeat(100)]);
+    const [row] = await as<{ capabilities: string[]; agent_version: string }>(
+      ownerA,
+      'select capabilities, agent_version from public.hosts',
+    );
+    expect(row!.capabilities).toHaveLength(16);
+    expect(row!.agent_version).toHaveLength(32);
+  });
+
+  it("can't be set by the owner, another host, or a signed-out caller", async () => {
+    await claim(host2, ownerA);
+    await as(ownerA, 'select public.host_heartbeat($1::text[], $2)', [['merges'], 'x']);
+    await as(host2, 'select public.host_heartbeat($1::text[], $2)', [['merges'], 'x']);
+    const rows = await as<{ id: string; capabilities: string[] }>(ownerA, 'select id, capabilities from public.hosts order by id');
+    expect(rows.find((r) => r.id === HOST_1)!.capabilities).toEqual([]);
+    await expect(as('anon', "select public.host_heartbeat('{merges}'::text[], 'x')")).rejects.toThrow(/permission denied/);
+  });
+
+  it('stops updating once the host is revoked', async () => {
+    await as(ownerA, 'select public.revoke_host($1)', [HOST_1]);
+    await as(host1, 'select public.host_heartbeat($1::text[], $2)', [['merges'], 'x']);
+    expect(await as(ownerA, 'select capabilities from public.hosts')).toEqual([{ capabilities: [] }]);
+  });
+});

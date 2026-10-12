@@ -1,5 +1,6 @@
 export * from "./agent-files.js";
 export * from "./answers.js";
+export * from "./capabilities.js";
 export * from "./client.js";
 export * from "./config.js";
 export * from "./mapping.js";
