@@ -1,6 +1,6 @@
 {
   "version": "0.2.1",
-  "asOf": "2026-10-12",
+  "asOf": "2026-10-14",
   "features": [
     "Plain-English intake — `exec-agent do \"...\"` resolves the repo and infers a check, or hands off to the planner",
     "Multi-task decomposition — one brain call breaks an objective into a dependency-ordered task graph",
@@ -24,9 +24,24 @@
     "iOS companion app (in development) — follow every objective live from your iPhone: tasks, attempts, cost, activity, and the decisions waiting on you",
     "Answer from your phone — each option with its pros, cons and risk, the agent's recommendation pre-selected, applied by your computer the instant you confirm",
     "Agent file tree — browse every file each agent added, modified, deleted or renamed, without the code ever leaving your computer",
-    "Private cloud relay — the daemon syncs status, costs, decisions and file names out over outbound connections only; source code and diffs stay on your machine, and every table is locked to you by row-level security"
+    "Private cloud relay — the daemon syncs status, costs, decisions and file names out over outbound connections only; source code and diffs stay on your machine, and every table is locked to you by row-level security",
+    "Merge from your phone — review what changed, the judge's verdict, and which repo it lands in, then Merge & Push; the same lock-guarded path as the dashboard, and it stops safely on uncommitted changes",
+    "Push notifications (in development) — your phone buzzes when a decision needs you, work is ready to merge, or an objective fails; titles only, never code",
+    "Honest reviews — a judge that fails is retried, and if it still can't give a verdict the work is marked \"not reviewed\", never silently accepted",
+    "Insights — spend over the last 30 days, spend by model, and the week's health, on your phone"
   ],
   "log": [
+    {
+      "date": "2026-10-14",
+      "entries": [
+        "Merge finished work from your iPhone — see what changed, the judge's verdict, and the target repo, then Merge & Push through the same lock-guarded path as the dashboard; a dirty repo or a conflict stops it safely and tells you why",
+        "Added push notifications — when a decision needs you, work is ready to merge, or an objective fails, each sent once and opening exactly that screen (needs the app's development build)",
+        "Fixed a failed review being recorded as accepted — the judge now retries, and work it still can't review is marked \"not reviewed\" before anyone merges it",
+        "The app now says why a computer isn't acting on a request — offline, running an older Praktor that needs a restart, or just slow — instead of spinning",
+        "Kept each task's file tree after its branch is merged and cleaned up",
+        "Added Insights to the app — 30-day spend by day and by model, and the week's health"
+      ]
+    },
     {
       "date": "2026-10-12",
       "entries": [
@@ -42,18 +57,6 @@
         "Added a private cloud relay the daemon syncs to over outbound connections only — status, costs, decisions and file names, never your source code — with every table locked down by row-level security tested against real Postgres",
         "Added `exec-agent cloud connect` — pairs this computer with the app through a single-use, ten-minute code, and refuses to ever store a secret key",
         "Hardened the local dashboard against cross-site requests and DNS rebinding — it now only ever answers this machine"
-      ]
-    },
-    {
-      "date": "2026-09-18",
-      "entries": [
-        "Released `v0.2.1` — the worker, the independent judge, and the failure diagnoser can now query a local graphify knowledge graph via MCP instead of grepping raw files, and the dashboard shows it",
-        "Gave the worker a second MCP server backed by graphify — a local, LLM-free per-repo call graph — with `query_graph`, `get_neighbors`, `shortest_path` and `god_nodes` preferred over Grep/Read for architecture questions",
-        "Gave the independent judge and the failure diagnoser the same graph access — the judge checks blast radius (a changed function breaking a caller the acceptance checks never exercise), the diagnoser checks whether a failure's real cause sits outside the attempt's own diff",
-        "Added a \"Knowledge graph\" panel to the dashboard's objective page — node/edge/community/file counts, a confidence breakdown, and the most-connected code by degree",
-        "Relicensed from MIT to Apache-2.0 — same freedom to use, modify, and fork into your own project, plus an explicit patent grant and retaliation clause",
-        "Let `exec-agent do` bootstrap a brand-new repo, not just find an existing one",
-        "Fixed the dashboard's Merge button doing nothing, and the objective page hanging on Loading"
       ]
     }
   ]
