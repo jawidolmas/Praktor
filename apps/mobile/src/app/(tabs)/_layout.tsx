@@ -12,6 +12,10 @@ export default function TabsLayout() {
 
   return (
     <NativeTabs tintColor={C.tint} minimizeBehavior="onScrollDown">
+      <NativeTabs.Trigger name="chat">
+        <NativeTabs.Trigger.Label>Chat</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'bubble.left.and.bubble.right', selected: 'bubble.left.and.bubble.right.fill' }} />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="objectives">
         <NativeTabs.Trigger.Label>Objectives</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'square.stack.3d.up', selected: 'square.stack.3d.up.fill' }} />

@@ -129,7 +129,7 @@ export function answeredVia(answeredBy: string | null): string {
   return by ? `by ${by}` : '';
 }
 
-export type HostCapability = 'answers' | 'merges';
+export type HostCapability = 'answers' | 'merges' | 'requests';
 
 export function hostCan(host: Host, capability: HostCapability): boolean {
   return (host.capabilities ?? []).includes(capability);

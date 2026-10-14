@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
  * leaving a request that nothing will ever pick up. Add to it whenever the
  * daemon learns to handle a new kind of request from the app.
  */
-export const HOST_CAPABILITIES = ["answers", "merges"] as const;
+export const HOST_CAPABILITIES = ["answers", "merges", "requests"] as const;
 
 export const AGENT_VERSION: string = (() => {
   try {

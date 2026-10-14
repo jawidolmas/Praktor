@@ -7,6 +7,7 @@ import type { AnswerInbox, PendingAnswer } from "./answers.js";
 import { AGENT_VERSION, HOST_CAPABILITIES } from "./capabilities.js";
 import type { MergeInbox, PendingMerge } from "./merge.js";
 import type { PushOutbox } from "./push.js";
+import type { EarlierRequest, LocalRepo, PendingRequest, RequestInbox } from "./requests.js";
 import type { CloudTable, CloudWriter } from "./sync.js";
 
 /**
@@ -223,5 +224,96 @@ export class SupabasePushOutbox implements PushOutbox {
   async drop(token: string): Promise<void> {
     const { error } = await this.client.rpc("drop_push_device", { p_token: token });
     if (error) throw new Error(`drop push device: ${error.message}`);
+  }
+}
+
+/** Requests from the phone addressed to this computer. */
+export class SupabaseRequestInbox implements RequestInbox {
+  constructor(
+    private readonly client: SupabaseClient,
+    private readonly hostId: string,
+  ) {}
+
+  async pending(): Promise<PendingRequest[]> {
+    const { data, error } = await this.client
+      .from("requests")
+      .select("id, thread_id, repo_key, message, created_at")
+      .eq("host_id", this.hostId)
+      .eq("status", "pending")
+      .order("created_at")
+      .limit(10);
+    if (error) throw new Error(`requests: ${error.message}`);
+    return data as PendingRequest[];
+  }
+
+  async earlier(threadId: string, before: string): Promise<EarlierRequest[]> {
+    const { data, error } = await this.client
+      .from("requests")
+      .select("message, objective_id")
+      .eq("thread_id", threadId)
+      .lt("created_at", before)
+      .order("created_at")
+      .limit(20);
+    if (error) throw new Error(`requests: ${error.message}`);
+    return data as EarlierRequest[];
+  }
+
+  async settle(id: string, status: "started" | "rejected", objectiveId: string | null, reason: string | null): Promise<void> {
+    const { error } = await this.client.rpc("settle_request", {
+      p_id: id,
+      p_status: status,
+      p_objective_id: objectiveId,
+      p_reason: reason,
+    });
+    if (error) throw new Error(`settle request: ${error.message}`);
+  }
+
+  /** Calls `onNew` the moment a request for this computer arrives. */
+  watch(onNew: () => void): () => void {
+    const channel = this.client
+      .channel(`requests:${this.hostId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "requests", filter: `host_id=eq.${this.hostId}` },
+        onNew,
+      )
+      .subscribe();
+    return () => {
+      void this.client.removeChannel(channel);
+    };
+  }
+}
+
+/** Keeps this computer's repo list (names and opaque keys only) current. */
+export class SupabaseRepoPublisher {
+  private lastPublished = "";
+
+  constructor(
+    private readonly client: SupabaseClient,
+    private readonly stamp: { owner_id: string; host_id: string },
+  ) {}
+
+  /** Upserts the list and removes repos that are gone; a no-op when
+   *  nothing changed since the last call. */
+  async publish(repos: LocalRepo[]): Promise<void> {
+    const rows = repos
+      .map((r) => ({ ...this.stamp, key: r.key, name: r.name.slice(0, 200), last_used_at: r.lastUsedAt }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+    const fingerprint = JSON.stringify(rows);
+    if (fingerprint === this.lastPublished) return;
+
+    const now = Date.now();
+    if (rows.length > 0) {
+      const { error } = await this.client
+        .from("repos")
+        .upsert(rows.map((r) => ({ ...r, updated_at: now })), { onConflict: "owner_id,host_id,key" });
+      if (error) throw new Error(`repos: ${error.message}`);
+    }
+    const keep = rows.map((r) => r.key);
+    let prune = this.client.from("repos").delete().eq("host_id", this.stamp.host_id);
+    if (keep.length > 0) prune = prune.not("key", "in", `(${keep.join(",")})`);
+    const { error } = await prune;
+    if (error) throw new Error(`repos prune: ${error.message}`);
+    this.lastPublished = fingerprint;
   }
 }

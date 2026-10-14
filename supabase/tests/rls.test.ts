@@ -559,3 +559,118 @@ describe('push devices', () => {
     ).rejects.toThrow(/permission denied/);
   });
 });
+
+describe('requests from the phone', () => {
+  const REPO_KEY = '0123456789abcdef';
+  const THREAD = '33333333-0000-4000-8000-000000000001';
+  let n = 0;
+  const id = () => `44444444-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+  const send = (who: Who, opts: { id?: string; thread?: string; host?: string; repo?: string; message?: string } = {}) =>
+    as<{ id: string; status: string; repo_name: string; host_id: string }>(
+      who,
+      'select * from public.send_request($1, $2, $3, $4, $5)',
+      [opts.id ?? id(), opts.thread ?? THREAD, opts.host ?? HOST_1, opts.repo ?? REPO_KEY, opts.message ?? 'add a README'],
+    );
+
+  beforeEach(async () => {
+    await claim(host1, ownerA);
+    await as(
+      host1,
+      `insert into public.repos (owner_id, host_id, key, name, updated_at) values ($1, $2, $3, 'takil-workspace', 1)`,
+      [OWNER_A, HOST_1, REPO_KEY],
+    );
+  });
+
+  it('lets the owner send a request to their computer, for a repo it offers', async () => {
+    const [row] = await send(ownerA);
+    expect(row).toMatchObject({ status: 'pending', repo_name: 'takil-workspace', host_id: HOST_1 });
+    expect(await as(host1, 'select message from public.requests')).toEqual([{ message: 'add a README' }]);
+  });
+
+  it('is idempotent on the phone-generated id — a retry never starts the work twice', async () => {
+    const reqId = id();
+    const [first] = await send(ownerA, { id: reqId });
+    const [again] = await send(ownerA, { id: reqId, message: 'something else' });
+    expect(again!.id).toBe(first!.id);
+    expect(await as(ownerA, 'select count(*)::int as n from public.requests')).toEqual([{ n: 1 }]);
+  });
+
+  it("won't let anyone reuse another person's request id", async () => {
+    const reqId = id();
+    await send(ownerA, { id: reqId });
+    await claim(host2, ownerB);
+    await expect(send(ownerB, { id: reqId, host: HOST_2 })).rejects.toThrow(/already used/);
+  });
+
+  it("refuses a repo the computer doesn't offer, and a computer that isn't yours", async () => {
+    await expect(send(ownerA, { repo: 'ffffffffffffffff' })).rejects.toThrow(/not on that computer/);
+    await claim(host2, ownerB);
+    await expect(send(ownerA, { host: HOST_2 })).rejects.toThrow(/not connected to your account/);
+  });
+
+  it("refuses to add to someone else's conversation", async () => {
+    await send(ownerA, { thread: THREAD });
+    await claim(host2, ownerB);
+    await as(host2, `insert into public.repos (owner_id, host_id, key, name, updated_at) values ($1, $2, $3, 'x', 1)`, [
+      OWNER_B,
+      HOST_2,
+      REPO_KEY,
+    ]);
+    await expect(send(ownerB, { thread: THREAD, host: HOST_2 })).rejects.toThrow(/no such conversation/);
+  });
+
+  it('bounds the message', async () => {
+    await expect(send(ownerA, { message: '   ' })).rejects.toThrow(/1-4000/);
+    await expect(send(ownerA, { message: 'x'.repeat(4001) })).rejects.toThrow(/1-4000/);
+  });
+
+  it('rate-limits requests per hour', async () => {
+    for (let i = 0; i < 30; i++) await send(ownerA);
+    await expect(send(ownerA)).rejects.toThrow(/too many requests/);
+  });
+
+  it('refuses anonymous and signed-out callers, and direct writes', async () => {
+    await expect(send(host1)).rejects.toThrow(/sign in/);
+    await expect(as('anon', 'select public.send_request(gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), $1, $2)', ['x', 'y'])).rejects.toThrow(
+      /permission denied/,
+    );
+    await expect(
+      as(ownerA, 'insert into public.requests (id, owner_id, host_id, thread_id, repo_key, repo_name, message) values (gen_random_uuid(), $1, $2, gen_random_uuid(), $3, $4, $5)', [
+        OWNER_A,
+        HOST_1,
+        REPO_KEY,
+        'x',
+        'hi',
+      ]),
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('can be settled once, only by the addressed computer', async () => {
+    await claim(host2, ownerA);
+    const [row] = await send(ownerA);
+    const settle = (who: Who, status: string) =>
+      as(who, 'select public.settle_request($1, $2, $3, $4) as ok', [row!.id, status, 'obj-9', null]);
+    expect(await settle(host2, 'started')).toEqual([{ ok: false }]);
+    expect(await settle(ownerA, 'started')).toEqual([{ ok: false }]);
+    expect(await settle(host1, 'started')).toEqual([{ ok: true }]);
+    expect(await settle(host1, 'rejected')).toEqual([{ ok: false }]);
+    expect(await as(ownerA, 'select status, objective_id from public.requests')).toEqual([{ status: 'started', objective_id: 'obj-9' }]);
+  });
+
+  it("only lets a computer publish its own repos, readable by its owner only", async () => {
+    await expect(
+      as(host1, `insert into public.repos (owner_id, host_id, key, name, updated_at) values ($1, $2, 'aaaaaaaaaaaaaaaa', 'x', 1)`, [
+        OWNER_B,
+        HOST_1,
+      ]),
+    ).rejects.toThrow(/row-level security/);
+    await expect(
+      as(ownerA, `insert into public.repos (owner_id, host_id, key, name, updated_at) values ($1, $2, 'aaaaaaaaaaaaaaaa', 'x', 1)`, [
+        OWNER_A,
+        HOST_1,
+      ]),
+    ).rejects.toThrow(/row-level security/);
+    expect(await as(ownerB, 'select name from public.repos')).toEqual([]);
+    expect(await as(ownerA, 'select name from public.repos')).toEqual([{ name: 'takil-workspace' }]);
+  });
+});

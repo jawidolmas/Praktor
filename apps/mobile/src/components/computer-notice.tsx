@@ -14,6 +14,7 @@ const SLOW_AFTER_MS = 90_000;
 const VERB: Record<HostCapability, string> = {
   answers: 'answer decisions from your phone',
   merges: 'merge from your phone',
+  requests: 'start work from your phone',
 };
 
 /** Re-renders every `everyMs`, so time-based messages appear on their own. */

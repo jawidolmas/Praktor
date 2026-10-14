@@ -4,12 +4,16 @@ import {
   SupabaseCloudWriter,
   SupabaseMergeInbox,
   SupabasePushOutbox,
+  SupabaseRepoPublisher,
+  SupabaseRequestInbox,
   createCloudClient,
   getHostStatus,
   loadCloudConfig,
   processAnswers,
   processMerges,
   processPush,
+  processRequests,
+  localRepos,
   type CloudConfig,
   type SupabaseClient,
 } from "@exec/cloud";
@@ -34,6 +38,8 @@ const MAX_BACKOFF_MS = 5 * 60_000;
 /** Answers and merge requests arrive over Realtime the instant they're
  *  sent; this re-check is only the safety net for a dropped live connection. */
 const INBOX_RECHECK_MS = 30_000;
+/** How often the repo list offered to the phone is re-checked. */
+const REPOS_EVERY_MS = 5 * 60_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
@@ -130,9 +136,13 @@ export async function runCloudBridge(db: Db): Promise<never> {
     const answers = new SupabaseAnswerInbox(client, host.hostId);
     const merges = new SupabaseMergeInbox(client, host.hostId);
     const push = new SupabasePushOutbox(client);
+    const requests = new SupabaseRequestInbox(client, host.hostId);
+    const repoPublisher = new SupabaseRepoPublisher(client, { owner_id: host.ownerId, host_id: host.hostId });
+    let nextRepos = 0;
     const waker = new Waker();
     const stopAnswers = answers.watch(() => waker.wake());
     const stopMerges = merges.watch(() => waker.wake());
+    const stopRequests = requests.watch(() => waker.wake());
     let nextSync = 0;
     let nextInboxCheck = 0;
 
@@ -149,7 +159,9 @@ export async function runCloudBridge(db: Db): Promise<never> {
             if (applied > 0) console.log(`[cloud] applied ${applied} answer${applied === 1 ? "" : "s"} from the app.`);
             const merged = await processMerges(db, merges);
             if (merged > 0) console.log(`[cloud] merged ${merged} objective${merged === 1 ? "" : "s"} approved from the app.`);
-            changed = applied + merged;
+            const startedNow = await processRequests(db, requests);
+            if (startedNow > 0) console.log(`[cloud] started ${startedNow} objective${startedNow === 1 ? "" : "s"} requested from the app.`);
+            changed = applied + merged + startedNow;
             nextInboxCheck = Date.now() + INBOX_RECHECK_MS;
           }
           // An answer or a merge changes local state: send it straight back so
@@ -167,6 +179,10 @@ export async function runCloudBridge(db: Db): Promise<never> {
               log(`notifications failed (${err instanceof Error ? err.message : String(err)}) — will retry.`);
             }
           }
+          if (Date.now() >= nextRepos) {
+            await repoPublisher.publish([...localRepos(db).values()]);
+            nextRepos = Date.now() + REPOS_EVERY_MS;
+          }
           if (backoff !== SYNC_EVERY_MS) log("relay reachable again — sync resumed.");
           backoff = SYNC_EVERY_MS;
           await waker.sleep(Math.max(0, Math.min(nextSync, nextInboxCheck) - Date.now()));
@@ -181,6 +197,7 @@ export async function runCloudBridge(db: Db): Promise<never> {
     } finally {
       stopAnswers();
       stopMerges();
+      stopRequests();
     }
   }
 }

@@ -445,3 +445,154 @@ export async function fetchInsights(): Promise<Insights> {
 
   return { runs: unwrap(runs) as Insights['runs'], costs, health };
 }
+
+export interface Repo {
+  host_id: string;
+  key: string;
+  name: string;
+  last_used_at: number | null;
+}
+
+export async function fetchRepos(): Promise<Repo[]> {
+  const result = await supabase.from('repos').select('host_id, key, name, last_used_at').order('name');
+  return unwrap(result) as Repo[];
+}
+
+export interface ChatRequest {
+  id: string;
+  thread_id: string;
+  host_id: string;
+  repo_key: string;
+  repo_name: string;
+  message: string;
+  status: 'pending' | 'started' | 'rejected';
+  objective_id: string | null;
+  reason: string | null;
+  created_at: string;
+}
+
+const REQUEST_COLUMNS = 'id, thread_id, host_id, repo_key, repo_name, message, status, objective_id, reason, created_at';
+const OBJECTIVE_COLUMNS = 'id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at';
+
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  lastAt: number;
+  repoName: string;
+  hostId: string;
+  /** The newest request, with its objective once the computer started one. */
+  latest: { request: ChatRequest; objective?: Objective };
+}
+
+/** Every conversation, newest activity first, named by its first message. */
+export async function fetchThreads(): Promise<ThreadSummary[]> {
+  const requests = unwrap(
+    await supabase.from('requests').select(REQUEST_COLUMNS).order('created_at', { ascending: true }).limit(1000),
+  ) as ChatRequest[];
+  const threads = new Map<string, ChatRequest[]>();
+  for (const r of requests) threads.set(r.thread_id, [...(threads.get(r.thread_id) ?? []), r]);
+
+  const latestIds = [...threads.values()]
+    .map((rs) => rs[rs.length - 1]!.objective_id)
+    .filter((x): x is string => !!x);
+  const objectives = latestIds.length
+    ? (unwrap(await supabase.from('objectives').select(OBJECTIVE_COLUMNS).in('id', latestIds)) as Objective[])
+    : [];
+  const byId = new Map(objectives.map((o) => [o.id, o] as const));
+
+  return [...threads.entries()]
+    .map(([id, rs]) => {
+      const last = rs[rs.length - 1]!;
+      const objective = last.objective_id ? byId.get(last.objective_id) : undefined;
+      return {
+        id,
+        title: rs[0]!.message.split(/\r?\n/)[0]!.slice(0, 120),
+        lastAt: Math.max(Date.parse(last.created_at), objective?.updated_at ?? 0),
+        repoName: last.repo_name,
+        hostId: last.host_id,
+        latest: { request: last, ...(objective ? { objective } : {}) },
+      };
+    })
+    .sort((a, b) => b.lastAt - a.lastAt);
+}
+
+export interface ThreadItem {
+  request: ChatRequest;
+  objective?: Objective;
+  tasks: Task[];
+  decisions: Decision[];
+  merge?: MergeRequest;
+  /** The latest error or warning line, to explain a failure. */
+  problem?: string;
+}
+
+/** One conversation: each request with everything about the objective it started. */
+export async function fetchThread(threadId: string): Promise<ThreadItem[]> {
+  const requests = unwrap(
+    await supabase.from('requests').select(REQUEST_COLUMNS).eq('thread_id', threadId).order('created_at'),
+  ) as ChatRequest[];
+  const ids = requests.map((r) => r.objective_id).filter((x): x is string => !!x);
+  if (ids.length === 0) return requests.map((request) => ({ request, tasks: [], decisions: [] }));
+
+  const [objectives, tasks, decisions, merges, problems] = await Promise.all([
+    supabase.from('objectives').select(OBJECTIVE_COLUMNS).in('id', ids),
+    supabase
+      .from('tasks')
+      .select('id, objective_id, key, title, task_class, status, attempts, max_attempts, depends_on, model, created_at, updated_at')
+      .in('objective_id', ids)
+      .order('key'),
+    supabase.from('decisions').select(DECISION_COLUMNS).in('objective_id', ids).order('created_at'),
+    supabase
+      .from('merge_requests')
+      .select('id, objective_id, status, message, pushed, created_at, settled_at')
+      .in('objective_id', ids)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('events')
+      .select('objective_id, text, kind, ts')
+      .in('objective_id', ids)
+      .in('kind', ['error', 'warn'])
+      .order('ts', { ascending: false })
+      .limit(50),
+  ]);
+  const objectiveRows = unwrap(objectives) as Objective[];
+  const taskRows = unwrap(tasks) as (Task & { objective_id: string })[];
+  const decisionRows = unwrap(decisions) as Decision[];
+  const mergeRows = unwrap(merges) as MergeRequest[];
+  const problemRows = unwrap(problems) as { objective_id: string; text: string }[];
+
+  return requests.map((request) => {
+    const id = request.objective_id;
+    const objective = id ? objectiveRows.find((o) => o.id === id) : undefined;
+    const merge = id ? mergeRows.find((m) => m.objective_id === id) : undefined;
+    const problem = id ? problemRows.find((p) => p.objective_id === id)?.text : undefined;
+    return {
+      request,
+      ...(objective ? { objective } : {}),
+      tasks: id ? taskRows.filter((t) => t.objective_id === id) : [],
+      decisions: id ? decisionRows.filter((d) => d.objective_id === id) : [],
+      ...(merge ? { merge } : {}),
+      ...(problem ? { problem } : {}),
+    };
+  });
+}
+
+/** Sends a message. Idempotent on `id` server-side: retrying never starts
+ *  the work twice. */
+export async function sendRequest(args: {
+  id: string;
+  threadId: string;
+  hostId: string;
+  repoKey: string;
+  message: string;
+}): Promise<ChatRequest> {
+  const { data, error } = await supabase.rpc('send_request', {
+    p_id: args.id,
+    p_thread_id: args.threadId,
+    p_host_id: args.hostId,
+    p_repo_key: args.repoKey,
+    p_message: args.message,
+  });
+  if (error) throw new Error(error.message);
+  return data as ChatRequest;
+}

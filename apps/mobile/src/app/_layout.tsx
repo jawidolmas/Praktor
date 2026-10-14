@@ -33,6 +33,10 @@ function RootStack() {
         <Stack.Screen name="index" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
+          name="chat/[thread]"
+          options={{ headerShown: true, headerBackTitle: 'Chats', headerShadowVisible: false, title: '' }}
+        />
+        <Stack.Screen
           name="add-computer"
           options={{ presentation: 'formSheet', sheetGrabberVisible: true, sheetAllowedDetents: [0.92] }}
         />
