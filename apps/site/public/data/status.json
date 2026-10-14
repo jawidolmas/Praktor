@@ -1,5 +1,5 @@
 {
-  "version": "0.2.1",
+  "version": "3.0.0",
   "asOf": "2026-10-14",
   "features": [
     "Plain-English intake — `exec-agent do \"...\"` resolves the repo and infers a check, or hands off to the planner",
@@ -28,12 +28,17 @@
     "Merge from your phone — review what changed, the judge's verdict, and which repo it lands in, then Merge & Push; the same lock-guarded path as the dashboard, and it stops safely on uncommitted changes",
     "Push notifications (in development) — your phone buzzes when a decision needs you, work is ready to merge, or an objective fails; titles only, never code",
     "Honest reviews — a judge that fails is retried, and if it still can't give a verdict the work is marked \"not reviewed\", never silently accepted",
-    "Insights — spend over the last 30 days, spend by model, and the week's health, on your phone"
+    "Insights — spend over the last 30 days, spend by model, and the week's health, on your phone",
+    "Say what you want from your phone (in development) — a chat with history, like the Claude app: pick a repo, describe the work, and follow it as a conversation, from plan to merge",
+    "Understands what isn't work — \"thanks\" gets a reply, not a run; a request it can't do gets an honest answer; finished work that changed nothing never offers a merge"
   ],
   "log": [
     {
       "date": "2026-10-14",
       "entries": [
+        "Released `v3.0.0` — Praktor now goes with you: start work, answer its questions, and merge the result from your iPhone, while the work itself never leaves your computer",
+        "Added a Claude-style chat to the app — say what you want in your own words, pick the repo, and follow it as a conversation; follow-ups carry what came before",
+        "Messages that aren't work no longer start any — \"thanks\" gets a reply for free, an impossible request gets an honest answer, and work that changed nothing never offers a merge",
         "Merge finished work from your iPhone — see what changed, the judge's verdict, and the target repo, then Merge & Push through the same lock-guarded path as the dashboard; a dirty repo or a conflict stops it safely and tells you why",
         "Added push notifications — when a decision needs you, work is ready to merge, or an objective fails, each sent once and opening exactly that screen (needs the app's development build)",
         "Fixed a failed review being recorded as accepted — the judge now retries, and work it still can't review is marked \"not reviewed\" before anyone merges it",
