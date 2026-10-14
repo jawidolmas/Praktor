@@ -31,6 +31,8 @@ export interface Objective {
   model: string;
   effort: string;
   cost_usd: number;
+  /** Files the finished work changed; null when unknown. 0 = nothing to merge. */
+  changed_files: number | null;
   merged_at: number | null;
   created_at: number;
   updated_at: number;
@@ -48,7 +50,7 @@ export async function fetchHosts(): Promise<Host[]> {
 export async function fetchObjectives(): Promise<Objective[]> {
   const { data, error } = await supabase
     .from('objectives')
-    .select('id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at')
+    .select('id, host_id, title, repo_name, status, model, effort, cost_usd, changed_files, merged_at, created_at, updated_at')
     .order('updated_at', { ascending: false })
     .limit(200);
   if (error) throw new Error(error.message);
@@ -212,7 +214,7 @@ export async function fetchObjectiveDetail(id: string): Promise<ObjectiveDetail 
   const [objective, tasks, runs, decisions, files] = await Promise.all([
     supabase
       .from('objectives')
-      .select('id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at')
+      .select('id, host_id, title, repo_name, status, model, effort, cost_usd, changed_files, merged_at, created_at, updated_at')
       .eq('id', id)
       .maybeSingle(),
     supabase
@@ -392,9 +394,11 @@ export const READY_TO_MERGE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 export async function fetchReadyToMerge(): Promise<Objective[]> {
   const result = await supabase
     .from('objectives')
-    .select('id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at')
+    .select('id, host_id, title, repo_name, status, model, effort, cost_usd, changed_files, merged_at, created_at, updated_at')
     .eq('status', 'done')
     .is('merged_at', null)
+    // Work that changed nothing has nothing to merge.
+    .or('changed_files.is.null,changed_files.gt.0')
     .gte('updated_at', Date.now() - READY_TO_MERGE_WINDOW_MS)
     .order('updated_at', { ascending: false });
   return unwrap(result) as Objective[];
@@ -465,14 +469,16 @@ export interface ChatRequest {
   repo_key: string;
   repo_name: string;
   message: string;
-  status: 'pending' | 'started' | 'rejected';
+  status: 'pending' | 'started' | 'rejected' | 'replied';
   objective_id: string | null;
   reason: string | null;
+  /** Praktor's reply when the message wasn't work ("thanks", or out of reach). */
+  reply: string | null;
   created_at: string;
 }
 
-const REQUEST_COLUMNS = 'id, thread_id, host_id, repo_key, repo_name, message, status, objective_id, reason, created_at';
-const OBJECTIVE_COLUMNS = 'id, host_id, title, repo_name, status, model, effort, cost_usd, merged_at, created_at, updated_at';
+const REQUEST_COLUMNS = 'id, thread_id, host_id, repo_key, repo_name, message, status, objective_id, reason, reply, created_at';
+const OBJECTIVE_COLUMNS = 'id, host_id, title, repo_name, status, model, effort, cost_usd, changed_files, merged_at, created_at, updated_at';
 
 export interface ThreadSummary {
   id: string;

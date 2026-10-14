@@ -1,5 +1,6 @@
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { decisions, getSetting, objectives, setSetting, type Db } from "@exec/db";
+import { changedFileCount } from "./agent-files.js";
 
 /**
  * Push notifications to the owner's phone, sent by the computer that knows
@@ -68,6 +69,8 @@ export function collectNotices(db: Db, since: number): Notice[] {
     )
     .all()) {
     const ready = o.status === "done";
+    // Finished work that changed nothing has nothing to merge — no ping.
+    if (ready && changedFileCount(db, o.id) === 0) continue;
     notices.push({
       key: `${ready ? "ready" : "failed"}:${o.id}`,
       title: ready ? "Ready to merge" : "Objective failed",

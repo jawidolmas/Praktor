@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { newId } from "@exec/core";
 import { objectives, openDb, runMigrations, runs, tasks, type Db } from "@exec/db";
 import { attemptBranchName } from "@exec/worker";
-import { agentFilesFor, parseNameStatusZ, recordChangedFiles } from "./agent-files.js";
+import { agentFilesFor, changedFileCount, parseNameStatusZ, recordChangedFiles } from "./agent-files.js";
 
 describe("parseNameStatusZ", () => {
   it("parses plain changes and renames, including paths with spaces", () => {
@@ -109,6 +110,18 @@ describe("agentFilesFor", () => {
     const baseSha = execFileSync("git", ["-C", repo, "rev-parse", "main"], { encoding: "utf8" }).trim();
     recordChangedFiles(db, { objectiveId, taskId, runId: "r1", attempt: 1, worktreePath: repo, baseSha });
     expect(agentFilesFor(db, objectiveId)[0]).toMatchObject({ available: false });
+  });
+
+  it("counts zero changed files as zero — and unknown as null, never as zero", () => {
+    const { objectiveId, taskId } = seed(1);
+    db.update(tasks).set({ status: "done" }).where(eq(tasks.id, taskId)).run();
+    // No record yet: unknown, so the app still offers a merge.
+    expect(changedFileCount(db, objectiveId)).toBeNull();
+
+    const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    recordChangedFiles(db, { objectiveId, taskId, runId: "r", attempt: 1, worktreePath: repo, baseSha: head });
+    // A record of an attempt that changed nothing: genuinely nothing to merge.
+    expect(changedFileCount(db, objectiveId)).toBe(0);
   });
 
   it("never throws when recording fails", () => {

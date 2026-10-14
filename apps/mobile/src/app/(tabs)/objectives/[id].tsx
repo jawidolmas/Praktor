@@ -144,7 +144,8 @@ function ReadyToMerge({
 
   // Shown while there's something to merge, while a merge is in flight, and
   // briefly after one settles so the result doesn't vanish the moment it lands.
-  const mergeable = o.status === 'done' && !o.merged_at;
+  // Finished work that changed nothing has nothing to merge.
+  const mergeable = o.status === 'done' && !o.merged_at && o.changed_files !== 0;
   if (!mergeable && request?.status !== 'pending' && !settledRecently) return null;
 
   let status: React.ReactNode = null;

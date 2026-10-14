@@ -14,6 +14,7 @@ function threadState(t: ThreadSummary): { label: string; color: ColorValue } {
   const { request, objective } = t.latest;
   if (request.status === 'pending') return { label: 'Sending', color: C.gray };
   if (request.status === 'rejected') return { label: 'Couldn’t start', color: C.orange };
+  if (request.status === 'replied') return { label: 'Replied', color: C.gray };
   if (!objective) return { label: 'Starting', color: C.blue };
   const look = objectiveLook(objective);
   return { label: look.label, color: look.color };

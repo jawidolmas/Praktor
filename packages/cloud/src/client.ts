@@ -258,12 +258,19 @@ export class SupabaseRequestInbox implements RequestInbox {
     return data as EarlierRequest[];
   }
 
-  async settle(id: string, status: "started" | "rejected", objectiveId: string | null, reason: string | null): Promise<void> {
+  async settle(
+    id: string,
+    status: "started" | "rejected" | "replied",
+    objectiveId: string | null,
+    reason: string | null,
+    reply?: string,
+  ): Promise<void> {
     const { error } = await this.client.rpc("settle_request", {
       p_id: id,
       p_status: status,
       p_objective_id: objectiveId,
       p_reason: reason,
+      p_reply: reply ?? null,
     });
     if (error) throw new Error(`settle request: ${error.message}`);
   }

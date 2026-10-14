@@ -14,7 +14,7 @@ import {
   tasks,
   type Db,
 } from "@exec/db";
-import { agentFilesFor, type TaskFiles } from "./agent-files.js";
+import { agentFilesFor, changedFileCount, type TaskFiles } from "./agent-files.js";
 import {
   toCloudAgentFiles,
   toCloudDecision,
@@ -157,7 +157,12 @@ export class CloudSync {
         .all();
 
       const costUsd = runRows.reduce((sum, r) => sum + r.costUsdEstimate, 0);
-      const objectiveRow = toCloudObjective(o, costUsd, this.stamp);
+      const objectiveRow = toCloudObjective(
+        o,
+        costUsd,
+        this.stamp,
+        o.status === "done" ? changedFileCount(this.db, o.id) : null,
+      );
       const taskCloud = taskRows.map((t) => toCloudTask(t, this.stamp));
       const runCloud = runRows.map((r) => toCloudRun(r, this.stamp));
       const decisionCloud = decisionRows.map((d) => toCloudDecision(d, this.stamp));

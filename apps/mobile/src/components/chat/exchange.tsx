@@ -188,6 +188,8 @@ export function Exchange({ item, host }: { item: ThreadItem; host: Host | undefi
         <ComputerNotice host={host} capability="requests" pendingSince={request.created_at} />
       </>
     );
+  } else if (request.status === 'replied') {
+    reply = <Line>{request.reply ?? ''}</Line>;
   } else if (request.status === 'rejected') {
     reply = <Line>I couldn’t start this. {request.reason ?? ''}</Line>;
   } else if (!objective) {
@@ -222,7 +224,9 @@ export function Exchange({ item, host }: { item: ThreadItem; host: Host | undefi
         {openDecisions.map((d) => (
           <DecisionInline key={d.id} d={d} />
         ))}
-        {objective.status === 'done' ? (
+        {objective.status === 'done' && objective.changed_files === 0 && !objective.merged_at ? (
+          <Line>Done — nothing needed changing.</Line>
+        ) : objective.status === 'done' ? (
           <>
             <Line>{objective.merged_at ? 'Done.' : `Done — ready to merge into ${objective.repo_name}.`}</Line>
             <MergeInline item={item} />

@@ -44,7 +44,7 @@ export function repoName(repoPath: string): string {
   return clip(parts[parts.length - 1] ?? "repo", 200);
 }
 
-export function toCloudObjective(o: ObjectiveRow, costUsd: number, stamp: Stamp) {
+export function toCloudObjective(o: ObjectiveRow, costUsd: number, stamp: Stamp, changedFiles: number | null = null) {
   return {
     ...stamp,
     id: o.id,
@@ -54,6 +54,7 @@ export function toCloudObjective(o: ObjectiveRow, costUsd: number, stamp: Stamp)
     model: o.model,
     effort: o.effort,
     cost_usd: costUsd,
+    changed_files: changedFiles,
     merged_at: o.mergedAt,
     created_at: o.createdAt,
     updated_at: o.updatedAt,

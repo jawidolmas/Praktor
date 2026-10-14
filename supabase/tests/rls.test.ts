@@ -657,6 +657,23 @@ describe('requests from the phone', () => {
     expect(await as(ownerA, 'select status, objective_id from public.requests')).toEqual([{ status: 'started', objective_id: 'obj-9' }]);
   });
 
+  it('can be answered with a reply instead of an objective', async () => {
+    const [row] = await send(ownerA, { message: 'thanks' });
+    expect(
+      await as(host1, 'select public.settle_request($1, $2, $3, $4, $5) as ok', [row!.id, 'replied', 'ignored', null, 'You are welcome!']),
+    ).toEqual([{ ok: true }]);
+    expect(await as(ownerA, 'select status, reply, objective_id from public.requests')).toEqual([
+      { status: 'replied', reply: 'You are welcome!', objective_id: null },
+    ]);
+  });
+
+  it('still accepts the 4-argument settle older daemons send', async () => {
+    const [row] = await send(ownerA);
+    expect(await as(host1, 'select public.settle_request($1, $2, $3, $4) as ok', [row!.id, 'started', 'obj-1', null])).toEqual([
+      { ok: true },
+    ]);
+  });
+
   it("only lets a computer publish its own repos, readable by its owner only", async () => {
     await expect(
       as(host1, `insert into public.repos (owner_id, host_id, key, name, updated_at) values ($1, $2, 'aaaaaaaaaaaaaaaa', 'x', 1)`, [

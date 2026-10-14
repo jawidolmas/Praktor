@@ -14,3 +14,4 @@ export * from "./brain.js";
 export * from "./fallback-check.js";
 export * from "./infer.js";
 export * from "./repos.js";
+export * from "./triage.js";

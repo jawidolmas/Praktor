@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { eq } from "drizzle-orm";
 import { getSetting, objectives, RUN_DEFAULTS, setSetting, submitDraftObjective, submitObjective, type Db } from "@exec/db";
-import { findGitRepos, inferCheck } from "@exec/worker";
+import { findGitRepos, inferCheck, triage, type Triage } from "@exec/worker";
 import { scrubPaths } from "./merge.js";
 
 /**
@@ -66,7 +66,13 @@ export interface RequestInbox {
   pending(): Promise<PendingRequest[]>;
   /** The conversation so far, oldest first, before this request. */
   earlier(threadId: string, before: string): Promise<EarlierRequest[]>;
-  settle(id: string, status: "started" | "rejected", objectiveId: string | null, reason: string | null): Promise<void>;
+  settle(
+    id: string,
+    status: "started" | "rejected" | "replied",
+    objectiveId: string | null,
+    reason: string | null,
+    reply?: string,
+  ): Promise<void>;
 }
 
 const STATUS_WORDS: Record<string, string> = {
@@ -112,11 +118,27 @@ export function startFromRequest(db: Db, args: { repoPath: string; message: stri
     : submitDraftObjective(db, common).objectiveId;
 }
 
+/** Decides whether a message is work at all. */
+export type Classify = (message: string, repo: LocalRepo, earlier: EarlierRequest[]) => Promise<Triage>;
+
+/** Wraps a triage function so that if it fails for any reason, the
+ *  message is treated as work: a genuine request must never be dropped
+ *  because the check broke. */
+export function makeClassify(check: typeof triage = triage): Classify {
+  return (message, repo, earlier) =>
+    check({ message, repoName: repo.name, earlier: earlier.map((e) => e.message), cwd: repo.path }).catch(
+      (): Triage => ({ kind: "task" }),
+    );
+}
+
+export const defaultClassify: Classify = makeClassify();
+
 /** Handles every pending request; returns how many objectives it started. */
 export async function processRequests(
   db: Db,
   inbox: RequestInbox,
   repos: () => Map<string, LocalRepo> = () => localRepos(db),
+  classify: Classify = defaultClassify,
 ): Promise<number> {
   const pending = await inbox.pending();
   if (pending.length === 0) return 0;
@@ -139,7 +161,14 @@ export async function processRequests(
     // Network trouble (reading the conversation, reporting back) propagates
     // to the caller's retry: it must never be mistaken for the request
     // itself failing, or a request that did start would read as "rejected".
-    const context = conversationContext(db, await inbox.earlier(r.thread_id, r.created_at));
+    const earlier = await inbox.earlier(r.thread_id, r.created_at);
+    // "Thanks" gets a reply, not an 8-cent run with a Merge button for nothing.
+    const kind = await classify(r.message, repo, earlier);
+    if (kind.kind !== "task") {
+      await inbox.settle(r.id, "replied", null, null, kind.reply ?? "");
+      continue;
+    }
+    const context = conversationContext(db, earlier);
     let objectiveId: string;
     try {
       objectiveId = startFromRequest(db, { repoPath: repo.path, message: r.message, ...(context ? { context } : {}) });

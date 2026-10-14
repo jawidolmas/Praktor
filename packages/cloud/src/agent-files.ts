@@ -120,6 +120,35 @@ function savedChangedFiles(db: Db, taskId: string, attempt: number): ChangedFile
   return undefined;
 }
 
+/**
+ * How many files a finished objective's accepted work changed, from the
+ * records made at acceptance — or null when that isn't known (a done task
+ * with no record, e.g. accepted before records existed). Zero means there is
+ * genuinely nothing to merge, so the app shouldn't offer it.
+ */
+export function changedFileCount(db: Db, objectiveId: string): number | null {
+  const done = db
+    .select({ id: tasks.id, attempts: tasks.attempts })
+    .from(tasks)
+    .where(and(eq(tasks.objectiveId, objectiveId), eq(tasks.status, "done")))
+    .all();
+  if (done.length === 0) return null;
+  let total = 0;
+  for (const t of done) {
+    const latest = db
+      .select({ attempt: runs.attempt })
+      .from(runs)
+      .where(eq(runs.taskId, t.id))
+      .orderBy(desc(runs.attempt))
+      .limit(1)
+      .get();
+    const saved = latest ? savedChangedFiles(db, t.id, latest.attempt) : undefined;
+    if (!saved) return null;
+    total += saved.changes.length;
+  }
+  return total;
+}
+
 /** For each task that has started at least one attempt, the paths its most
  *  recent attempt changed against the objective's base. A branch that's
  *  gone (merged and cleaned up) comes back `available: false`, so the caller
