@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
-import { git } from "@exec/worker";
+import { findGitRepos, git, searchRoots, type RepoCandidate } from "@exec/worker";
 
 /**
  * Turn "in my-project" into an actual repo path.
@@ -11,42 +11,7 @@ import { git } from "@exec/worker";
  * "most likely" repo and possibly running against the wrong one.
  */
 
-export interface RepoCandidate {
-  name: string;
-  path: string;
-}
-
-export function searchRoots(): string[] {
-  const extra = (process.env["EXEC_REPO_SEARCH_PATHS"] ?? "")
-    .split(/[;,]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  // Desktop is where this project and the repos tested against it so far both
-  // live. EXEC_REPO_SEARCH_PATHS extends the list for anyone whose repos live
-  // elsewhere.
-  return [join(homedir(), "Desktop"), ...extra];
-}
-
-/** Every git repo found one level down from the search roots. */
-export function findGitRepos(): RepoCandidate[] {
-  const found: RepoCandidate[] = [];
-  for (const root of searchRoots()) {
-    let entries;
-    try {
-      entries = readdirSync(root, { withFileTypes: true });
-    } catch {
-      continue; // root doesn't exist or isn't readable — skip it, not fatal
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const path = join(root, entry.name);
-      if (existsSync(join(path, ".git"))) {
-        found.push({ name: entry.name, path });
-      }
-    }
-  }
-  return found;
-}
+export { findGitRepos, searchRoots, type RepoCandidate };
 
 const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 

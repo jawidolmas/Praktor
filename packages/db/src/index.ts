@@ -5,3 +5,4 @@ export * from "./migrate.js";
 export * from "./daemon.js";
 export * from "./autostart.js";
 export * from "./rollups.js";
+export * from "./intake.js";

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { AcceptanceCheck } from "@exec/core";
-import { weakChangedCheck } from "@exec/worker";
+import { weakChangedCheck } from "./fallback-check.js";
 
 /**
  * Infer an acceptance check from a plain-English request, for the `do` command

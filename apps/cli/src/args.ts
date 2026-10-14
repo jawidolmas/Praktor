@@ -1,3 +1,4 @@
+import { RUN_DEFAULTS } from "@exec/db";
 import type { AcceptanceCheck, EffortLevel, ObjectiveOnFailure } from "@exec/core";
 
 const VALID_ON_FAILURE = new Set<string>(["escalate", "abandon", "skip"]);
@@ -50,21 +51,21 @@ export function parseCheck(spec: string): AcceptanceCheck {
 
 /** Common run-shaping flags, shared by "run" and as overrides on "do". */
 export function readRunOptions(flags: Map<string, string[]>) {
-  const onFailure = flags.get("on-failure")?.[0] ?? "escalate";
+  const onFailure = flags.get("on-failure")?.[0] ?? RUN_DEFAULTS.onFailure;
   if (!VALID_ON_FAILURE.has(onFailure)) {
     throw new Error(`--on-failure must be one of escalate|abandon|skip, got "${onFailure}"`);
   }
 
   return {
-    model: flags.get("model")?.[0] ?? "claude-sonnet-5",
+    model: flags.get("model")?.[0] ?? RUN_DEFAULTS.model,
     // Real runs averaged 10.3 turns / 100s for one-line-file tasks, mostly
     // orientation rather than thinking — "high" was overkill for the
     // straightforward end of the workload. Still fully overridable per task.
-    effort: (flags.get("effort")?.[0] ?? "medium") as EffortLevel,
-    baseRef: flags.get("base-ref")?.[0] ?? "HEAD",
-    maxAttempts: Number(flags.get("max-attempts")?.[0] ?? "3"),
-    maxTurns: Number(flags.get("max-turns")?.[0] ?? "30"),
-    maxWallClockMs: Number(flags.get("max-wall-clock-min")?.[0] ?? "20") * 60_000,
+    effort: (flags.get("effort")?.[0] ?? RUN_DEFAULTS.effort) as EffortLevel,
+    baseRef: flags.get("base-ref")?.[0] ?? RUN_DEFAULTS.baseRef,
+    maxAttempts: Number(flags.get("max-attempts")?.[0] ?? RUN_DEFAULTS.maxAttempts),
+    maxTurns: Number(flags.get("max-turns")?.[0] ?? RUN_DEFAULTS.maxTurns),
+    maxWallClockMs: Number(flags.get("max-wall-clock-min")?.[0] ?? RUN_DEFAULTS.maxWallClockMs / 60_000) * 60_000,
     // What to do when a task exhausts its attempts and can't be recovered
     // mechanically: raise a decision (default, safest), fail the objective
     // outright, or tolerate it and continue without that task.

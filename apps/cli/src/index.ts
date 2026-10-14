@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { answerDecision, cancelObjective, openDb, runMigrations } from "@exec/db";
 import { approveObjective } from "./approve.js";
+import { inferCheck } from "@exec/worker";
 import { parseArgs, parseCheck, readRunOptions } from "./args.js";
 import { runCloud } from "./cloud.js";
 import {
@@ -12,7 +13,6 @@ import {
 } from "./autostart.js";
 import { daemonStatus, ensureDaemonRunning, stopDaemon } from "./daemon-client.js";
 import { printEvents } from "./events.js";
-import { inferCheck } from "./infer.js";
 import { printObjectiveList } from "./list.js";
 import { printProfileList, setProfileEntry, unsetProfileEntry } from "./profile.js";
 import { createRepoAt, resolveCreateTarget, resolveRepoFromText } from "./resolve-repo.js";
