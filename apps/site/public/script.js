@@ -448,7 +448,7 @@ const DEMO_SCRIPT = [
   { type: "dim", text: "→ daemon started (none was running) — driving this in the background" },
   { type: "dim", text: "→ worktree exec/o-9c14-attempt-1 opened" },
   { type: "accent", text: "→ worker editing tests/checkout.spec.ts" },
-  { type: "warn", text: "→ decision: test touches CI config — escalated to Telegram" },
+  { type: "warn", text: "→ decision: test touches CI config — sent to your phone" },
   { type: "ok", text: "→ decide o-9c14 allow   (answered from phone)" },
   { type: "dim", text: "→ running check: npm test -- checkout" },
   { type: "ok", text: "→ check passed — attempt accepted" },
@@ -673,7 +673,7 @@ if (demoSection && "IntersectionObserver" in window) {
         { t: "The terminal already watching it" },
         { t: "exec-agent decide <key> <option>", c: 1 },
         { t: "A card in the dashboard, with pros and cons" },
-        { t: "Telegram, with one tappable button per option" } ] },
+        { t: "The Praktor app, with one tap per option" } ] },
       { t: "A rate limit parks it", leaves: [
         { t: "Parked in place — same worktree, same progress" },
         { t: "Retried the moment the limit clears" },

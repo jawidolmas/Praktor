@@ -6,8 +6,8 @@ import type { RequestDecisionInput } from "@exec/core";
  * process) actually blocks the worker's tool call, polling the database for
  * an answer, so this is just the fastest path when you happen to still be
  * watching: `exec-agent decide` and the dashboard answer the same row from
- * anywhere else. This is a stand-in for the Telegram bridge (V0.1 in the
- * plan) as the "you happen to be right here" case specifically.
+ * anywhere else, and the iOS app answers it from wherever you are; this is
+ * the "you happen to be right here" case specifically.
  */
 export async function askInTerminal(
   input: RequestDecisionInput,

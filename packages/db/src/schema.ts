@@ -172,14 +172,10 @@ export const decisions = sqliteTable(
     answeredAt: integer("answered_at"),
     rationale: text("rationale"),
     deadline: integer("deadline"),
-    // Set once a push notification for this decision has actually been sent
-    // (Telegram today). Null is the "still needs notifying" queue, so the
-    // bridge can find pending work with a plain WHERE clause instead of
-    // resending on every poll.
+    // Written by the Telegram bridge, removed in v3.1 in favour of the iOS
+    // app's notifications. Kept so older decisions keep their history (and
+    // to avoid a destructive migration); nothing writes them any more.
     notifiedAt: integer("notified_at"),
-    // The bot message carrying this decision's options, so an answer routed
-    // back through the same channel (a tapped inline button) can edit that
-    // message to show it was answered, instead of leaving a stale button.
     notifiedMessageId: integer("notified_message_id"),
     // Set once an L3 (permanent-failure) decision's answer has actually been
     // applied to the task graph (engine.ts's applyAnsweredFailureDecisions).
@@ -263,8 +259,8 @@ export const counters = sqliteTable("counters", {
 
 /**
  * Small daemon-wide key/value state that doesn't warrant its own table — e.g.
- * the Telegram long-poll cursor, which must survive a daemon restart or a
- * redelivered update could re-answer a decision that already moved on.
+ * the cloud sync's cursors and the push notifications already sent, which
+ * must survive a daemon restart.
  */
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),

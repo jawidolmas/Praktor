@@ -49,8 +49,8 @@ function modelBadge(model) {
 }
 
 // `answeredBy` is a free-text, convention-based field written by whichever
-// channel actually recorded the answer (telegram-bridge.ts writes
-// "telegram:<user>", the CLI writes "cli-operator" or a --by override,
+// channel actually recorded the answer (the since-removed Telegram bridge
+// wrote "telegram:<user>" — still shown for older decisions — the CLI writes "cli-operator" or a --by override,
 // apps/cli/src/decide.ts writes "terminal-operator", the dashboard defaults
 // to "dashboard", and answers sent from the iOS app arrive as "app") — there's no structured column for it, so this is the one
 // place that convention gets turned into something a person can scan at a

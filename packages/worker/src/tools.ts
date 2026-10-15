@@ -54,7 +54,7 @@ export function createSupervisorTools(callbacks: SupervisorToolCallbacks) {
     "request_decision",
     "Ask, notify, message, or check in with the person supervising this work, and " +
       "wait for their answer — delivered to them directly (e.g. a push " +
-      "notification to their phone via Telegram), not just written to a file or " +
+      "notification to their phone in the Praktor app), not just written to a file or " +
       "left as a note. Use this whenever the objective itself asks you to ask, " +
       "check with, confirm with, or get input from them about anything, no matter " +
       "how small — that instruction is what makes it not a routine choice you are " +

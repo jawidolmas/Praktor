@@ -36,7 +36,7 @@ export function execHome(): string {
  * Open the supervisor database.
  *
  * WAL is what makes the single-file choice work here: the daemon is the only
- * writer, while the CLI, the Telegram bridge and the dashboard all read
+ * writer, while the CLI, the cloud sync and the dashboard all read
  * concurrently without blocking it.
  */
 export function openDb(options: OpenDbOptions = {}): ExecDbHandle {

@@ -21,9 +21,9 @@ import type { Db } from "@exec/db";
 
 /**
  * The cloud bridge: keeps the Supabase relay's mirror of this machine's
- * state current, so the iOS app can follow it from any network. Like the
- * Telegram bridge, it runs inside the daemon process and only ever makes
- * outbound connections — no port is opened on this machine.
+ * state current, so the iOS app can follow it from any network. It runs
+ * inside the daemon process and only ever makes outbound connections — no
+ * port is opened on this machine.
  *
  * It never creates this machine's cloud identity itself: that only happens
  * in `exec-agent cloud connect`, where a person is present to claim it. Until

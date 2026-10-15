@@ -52,7 +52,6 @@ import {
   type VerifyOutcome,
   type WorktreeHandle,
 } from "@exec/worker";
-import { sendDecisionPacket } from "./decision-packet.js";
 import { renderReport, type AttemptSummary } from "./report.js";
 import { reviewWithRetry } from "./review-retry.js";
 import { recordChangedFiles } from "@exec/cloud";
@@ -442,7 +441,6 @@ async function runAttempt(
     // because a person hadn't replied yet.
     if (result.exitReason === "escalated" && result.stallSignal?.decisionKey !== undefined) {
       const key = result.stallSignal.decisionKey;
-      await sendDecisionPacket(db, objective, task, key, worktree.path);
       console.log(`[${objective.id.slice(0, 8)}] attempt ${attempt} paused on ${key} — waiting for it to be answered`);
       const answered = await waitForDecisionAnswerForever(db, key);
       const decisionRow = db.select().from(decisions).where(eq(decisions.key, key)).get();
@@ -814,7 +812,7 @@ export async function driveTask(db: Db, task: TaskRow, objective: ObjectiveRow):
  * checkpoint-and-respawn loop has nothing left to try — governed by the
  * objective's `onFailure` policy, set at submission time (default
  * "escalate"). This is the one place Ingredient 1 deliberately reuses
- * Ingredient 4's decision/Telegram pipeline rather than building a new one:
+ * Ingredient 4's decision pipeline rather than building a new one:
  * a permanent failure is exactly the kind of fork a person, not more retries,
  * should resolve.
  */

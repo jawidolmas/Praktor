@@ -210,8 +210,7 @@ export function listOpenDecisions(db: Db) {
  *  still blocking someone, so once a decision is answered it disappears from
  *  that view entirely. Widened column set (answeredBy/rationale/notifiedAt)
  *  over `listOpenDecisions` on purpose — this is the one place a viewer can
- *  ask "who decided this, through what channel, and did Telegram actually
- *  notify anyone" after the fact. */
+ *  ask "who decided this, and through what channel" after the fact. */
 export function listDecisionHistory(db: Db, limit = 300) {
   return db
     .select({
@@ -387,9 +386,8 @@ export interface HealthSnapshot {
   windowMs: number;
 }
 
-/** Wraps two functions `@exec/db` already computes for the Telegram morning
- *  digest (`approximateHealthSince`/`recoveredTasksSince`) but that, until
- *  now, never reached the dashboard — the digest was the only consumer. */
+/** Wraps two functions `@exec/db` computes (`approximateHealthSince` /
+ *  `recoveredTasksSince`) — also what the iOS app's health tiles show. */
 export function getHealthSnapshot(db: Db, windowMs = 7 * 24 * 60 * 60 * 1000): HealthSnapshot {
   const since = Date.now() - windowMs;
   return {

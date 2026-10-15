@@ -47,9 +47,8 @@ This is v0.1. What exists today:
   clears, instead of giving up — it does not consume the attempt budget.
 - Decisions raised by a worker (`request_decision`) can be answered from wherever you actually
   are: the terminal watching it (same prompt as always), `exec-agent decide <key> <option>` from
-  any other terminal, a button in the dashboard, or — if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
-  are set — a push notification to your phone with tappable options, answerable from anywhere.
-  See [Telegram bridge](#telegram-bridge) below.
+  any other terminal, a button in the dashboard, or the Praktor iOS app — which notifies you
+  the moment a decision is raised. See [Phone (iOS app)](#phone-ios-app) below.
 - A human review checkpoint (`exec-agent approve <objective-id>`, or the dashboard's diff view and
   Merge button): a worker's accepted work always lands on its own branch, never merged
   automatically — this is what actually gets it into your real repo, once you've looked.
@@ -196,38 +195,22 @@ degree — reading the same graphify graph.json the worker/judge/diagnoser alrea
 [Knowledge graph](#knowledge-graph-graphify) below); it never shells out to `graphify` itself, only
 the daemon does that.
 
-## Telegram bridge
+## Phone (iOS app)
 
-Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (in `.env` — the daemon loads it directly, you
-don't need to `export` anything) and the daemon pushes every decision a worker raises to that
-chat the moment it's raised, with one tappable button per option. Tapping one answers it exactly
-the way `exec-agent decide` would — same `answerDecision` write, so the worker unblocks whether
-you tap a button, run the CLI command, or click the dashboard, whichever you happen to reach
-first.
-
-Setup: message `@BotFather` in Telegram, send `/newbot`, and it hands you a token. Then message
-your new bot once (anything) and fetch your chat id from
-`https://api.telegram.org/bot<token>/getUpdates` — look for `message.chat.id` in the response.
-Both go in `.env`; there's nothing else to configure and nothing to expose publicly — replies are
-picked up by long-polling Telegram, not a webhook, so no port needs to be open.
-
-This runs as two loops inside the daemon process itself (push newly-raised decisions; long-poll
-for taps) rather than as a separate process — one thing to keep running, consistent with the
-daemon already being the one thing that has to survive you closing the terminal.
+The Praktor iOS app (in development, TestFlight first) lets you start work, answer decisions and
+merge finished work from your phone, and notifies you when a decision needs you, when work is
+ready to merge, or when an objective fails. Pair a computer once with
+`exec-agent cloud connect` and scan the code it shows from the app; the daemon then keeps the app
+current over outbound connections only. Status, costs, decisions and changed file *names* sync —
+never source code or diffs.
 
 A decision unanswered for 5 minutes stops that worker session rather than leaving it idling on a
 question that might not get answered for hours — not because the wait costs tokens (it doesn't;
 a blocked decision is a local database poll, not an API call), but because a live process sitting
-open indefinitely is worse than a clean packet you can come back to. The moment that happens, a
-PDF is generated — the decision with full pros/cons, what's been done so far, which files are
-touched — and sent to the same chat. Answer it whenever (Telegram, `exec-agent decide`, or the
-dashboard, same as any decision) and a fresh worker session resumes the same attempt, same
-worktree, already told the answer — it does not start over, and it does not count against the
-task's attempt budget.
-
-A daily digest also goes out once, at `TELEGRAM_DIGEST_HOUR` local time (default 8am) —
-what's finished, still running, waiting on a decision, or paused on a rate limit — so the habit
-is "read this every morning," not "hope you remember to check."
+open indefinitely is worse than a clean pause you can come back to. Answer it whenever (the app,
+`exec-agent decide`, or the dashboard, same as any decision) and a fresh worker session resumes
+the same attempt, same worktree, already told the answer — it does not start over, and it does
+not count against the task's attempt budget.
 
 ## Configuration
 

@@ -3,7 +3,7 @@ import { answerDecision, decisions, type Db } from "@exec/db";
 
 /**
  * Applies decision answers sent from the phone. Every answer goes through
- * `answerDecision` — the exact path the CLI, dashboard and Telegram use — so
+ * `answerDecision` — the exact path the CLI and dashboard use — so
  * the phone gets no special powers: the same "still open?" check, the same
  * task unblocking, the same audit event. The first answer from any channel
  * wins; a later one is refused and the phone is told why.

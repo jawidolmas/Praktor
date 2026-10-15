@@ -23,11 +23,10 @@ import { applyAnsweredFailureDecisions, driveTask, worktreePathFor, worktreesDir
 import { reclaimWorktrees } from "./gc.js";
 import { planObjective } from "./plan.js";
 import { runCloudBridge } from "./cloud-bridge.js";
-import { loadTelegramConfig, runTelegramBridge } from "./telegram-bridge.js";
 
 /**
  * The daemon is launched detached, by `spawnDaemon` in the CLI, with no
- * shell profile behind it — so config in `.env` (TELEGRAM_BOT_TOKEN and
+ * shell profile behind it — so config in `.env` (EXEC_HOME, model keys and
  * friends) would otherwise never reach it no matter what the invoking
  * terminal has exported. Resolved against this file's own location, not
  * `process.cwd()`, because the daemon can be started while sitting in any
@@ -225,21 +224,8 @@ function main(): void {
   console.log(`Database: ${path}`);
   console.log(`Log:      ${logFilePath()}`);
 
-  const telegramConfig = loadTelegramConfig();
-  if (telegramConfig) {
-    // Fire-and-forget, deliberately not awaited: its own internal loops
-    // already catch and retry forever, so this only rejects on a genuine
-    // programming error — and even then, a broken notification channel
-    // must not stop the daemon from driving tasks.
-    runTelegramBridge(db, telegramConfig).catch((err: unknown) => {
-      console.error("[telegram] bridge crashed and will not restart until the daemon does:", err);
-    });
-  } else {
-    console.log("Telegram bridge: disabled (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable).");
-  }
-
-  // Same fire-and-forget contract as the Telegram bridge: it retries
-  // forever on its own, and a broken relay must never stop task driving.
+  // Fire-and-forget, deliberately not awaited: it retries forever on its
+  // own, and a broken relay must never stop the daemon from driving tasks.
   runCloudBridge(db).catch((err: unknown) => {
     console.error("[cloud] bridge crashed and will not restart until the daemon does:", err);
   });
