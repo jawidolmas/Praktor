@@ -5,6 +5,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { disablePush } from '@/lib/notifications';
+import { signInErrorMessage } from './account';
 import { supabase } from '@/lib/supabase';
 
 interface AuthState {
@@ -45,7 +46,12 @@ export async function signInWithApple(): Promise<SignInResult> {
 
   try {
     const credential = await AppleAuthentication.signInAsync({
-      requestedScopes: [AppleAuthentication.AppleAuthenticationScope.FULL_NAME],
+      // Email too, so the account has one to show (and Supabase never has to
+      // accept an email-less sign-in). "Hide My Email" still works.
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
       nonce: hashedNonce,
     });
     if (!credential.identityToken) {
@@ -57,7 +63,7 @@ export async function signInWithApple(): Promise<SignInResult> {
       token: credential.identityToken,
       nonce: rawNonce,
     });
-    if (error) return { ok: false, cancelled: false, message: 'Couldn’t sign in. Check your connection and try again.' };
+    if (error) return { ok: false, cancelled: false, message: signInErrorMessage(error.message, 'Apple') };
 
     // Apple shares the name only on the very first sign-in; keep it.
     const given = credential.fullName?.givenName;
@@ -70,7 +76,12 @@ export async function signInWithApple(): Promise<SignInResult> {
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === 'ERR_REQUEST_CANCELED') return { ok: false, cancelled: true, message: '' };
-    return { ok: false, cancelled: false, message: 'Sign in with Apple isn’t available right now.' };
+    const detail = [code, err instanceof Error ? err.message : ''].filter(Boolean).join(': ').slice(0, 120);
+    return {
+      ok: false,
+      cancelled: false,
+      message: `Sign in with Apple isn’t available right now.${detail ? `\n\n(${detail})` : ''}`,
+    };
   }
 }
 
@@ -120,7 +131,7 @@ export async function signInWithGoogle(): Promise<SignInResult> {
   }
 
   const exchange = await supabase.auth.exchangeCodeForSession(code);
-  if (exchange.error) return { ok: false, cancelled: false, message: 'Couldn’t sign in. Check your connection and try again.' };
+  if (exchange.error) return { ok: false, cancelled: false, message: signInErrorMessage(exchange.error.message, 'Google') };
   return { ok: true };
 }
 

@@ -6,6 +6,7 @@ import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Switch, Text, V
 
 import { IconTile, Row, Section } from '@/components/ui';
 import { C, Space, Type } from '@/constants/theme';
+import { accountLabel } from '@/lib/account';
 import { signOut, useSession } from '@/lib/auth';
 import { hostState, timeAgo, type HostState } from '@/lib/format';
 import { disablePush, enablePush, pushStatus, pushSupport, type PushStatus } from '@/lib/notifications';
@@ -122,7 +123,7 @@ export default function Computers() {
   const hosts = useLive('hosts', ['hosts'], fetchHosts);
   const active = (hosts.data ?? []).filter((h) => !h.revoked_at);
   const removed = (hosts.data ?? []).filter((h) => h.revoked_at);
-  const name = (session?.user.user_metadata?.given_name as string | undefined) ?? 'Signed in with Apple';
+  const account = accountLabel(session?.user);
 
   return (
     <ScrollView
@@ -174,7 +175,7 @@ export default function Computers() {
       <NotificationsSection />
 
       <Section title="Account">
-        <Row title={name} leading={<IconTile symbol="person.fill" color={C.gray} />} />
+        <Row title={account.title} subtitle={account.subtitle} leading={<IconTile symbol={account.symbol} color={C.gray} />} />
         <Row title="Sign Out" destructive onPress={confirmSignOut} />
       </Section>
 
