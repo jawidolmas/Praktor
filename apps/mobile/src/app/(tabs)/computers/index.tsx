@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { IconTile, Row, Section } from '@/components/ui';
 import { C, Space, Type } from '@/constants/theme';
@@ -42,10 +42,17 @@ function confirmRemove(h: Host, onDone: () => void) {
   );
 }
 
-function confirmSignOut() {
+function confirmSignOut(onStart: () => void) {
   Alert.alert('Sign out?', 'Your computers keep running and syncing. Sign in again any time to see them.', [
     { text: 'Cancel', style: 'cancel' },
-    { text: 'Sign Out', style: 'destructive', onPress: () => signOut() },
+    {
+      text: 'Sign Out',
+      style: 'destructive',
+      onPress: () => {
+        onStart();
+        signOut();
+      },
+    },
   ]);
 }
 
@@ -124,6 +131,7 @@ export default function Computers() {
   const active = (hosts.data ?? []).filter((h) => !h.revoked_at);
   const removed = (hosts.data ?? []).filter((h) => h.revoked_at);
   const account = accountLabel(session?.user);
+  const [signingOut, setSigningOut] = useState(false);
 
   return (
     <ScrollView
@@ -176,7 +184,12 @@ export default function Computers() {
 
       <Section title="Account">
         <Row title={account.title} subtitle={account.subtitle} leading={<IconTile symbol={account.symbol} color={C.gray} />} />
-        <Row title="Sign Out" destructive onPress={confirmSignOut} />
+        <Row
+          title={signingOut ? 'Signing Out…' : 'Sign Out'}
+          destructive
+          onPress={signingOut ? undefined : () => confirmSignOut(() => setSigningOut(true))}
+          trailing={signingOut ? <ActivityIndicator /> : undefined}
+        />
       </Section>
 
       <View style={styles.privacy}>

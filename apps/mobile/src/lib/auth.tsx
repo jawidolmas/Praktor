@@ -6,7 +6,9 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import { disablePush } from '@/lib/notifications';
 import { signInErrorMessage } from './account';
-import { supabase } from '@/lib/supabase';
+import { keychainStorage } from '@/lib/keychain-storage';
+import { AUTH_STORAGE_KEY, supabase } from '@/lib/supabase';
+import { withTimeout } from './timeout';
 
 interface AuthState {
   /** `undefined` while the stored session is still being read. */
@@ -15,13 +17,21 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState>({ session: undefined });
 
+/** Set by the provider: shows the signed-out app even when Supabase can't
+ *  confirm the sign-out (offline), after the stored session is cleared. */
+let showSignedOut: (() => void) | undefined;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
 
   useEffect(() => {
+    showSignedOut = () => setSession(null);
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
-    return () => data.subscription.unsubscribe();
+    return () => {
+      showSignedOut = undefined;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   const value = useMemo(() => ({ session }), [session]);
@@ -135,8 +145,23 @@ export async function signInWithGoogle(): Promise<SignInResult> {
   return { ok: true };
 }
 
+/**
+ * Signs out — always. Notifications to this phone are switched off first
+ * (best effort, time-boxed), then the session is ended on the server too.
+ * If the server can't be reached, this phone is signed out anyway: the
+ * stored session is cleared from the Keychain, so pressing Sign Out can
+ * never leave someone signed in.
+ */
 export async function signOut(): Promise<void> {
-  // Stop notifications to this phone while the session can still say so.
   await disablePush();
-  await supabase.auth.signOut();
+  try {
+    const { error } = await withTimeout(supabase.auth.signOut(), 6000, 'sign-out');
+    if (!error) return;
+  } catch {
+    // Fall through to signing out locally.
+  }
+  supabase.auth.stopAutoRefresh();
+  await keychainStorage.removeItem(AUTH_STORAGE_KEY).catch(() => {});
+  await keychainStorage.removeItem(`${AUTH_STORAGE_KEY}-code-verifier`).catch(() => {});
+  showSignedOut?.();
 }

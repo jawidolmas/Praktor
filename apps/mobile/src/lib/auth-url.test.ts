@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('expo-apple-authentication', () => ({}));
 vi.mock('expo-crypto', () => ({}));
 vi.mock('expo-web-browser', () => ({}));
-vi.mock('@/lib/supabase', () => ({ supabase: {} }));
+vi.mock('@/lib/supabase', () => ({ supabase: {}, AUTH_STORAGE_KEY: 'k' }));
+vi.mock('@/lib/keychain-storage', () => ({ keychainStorage: {} }));
 vi.mock('@/lib/notifications', () => ({ disablePush: async () => {} }));
 
 const { AUTH_REDIRECT, queryParam } = await import('./auth');

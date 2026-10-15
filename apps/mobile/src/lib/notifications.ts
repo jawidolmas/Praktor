@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useEffect } from 'react';
 
 import { safeRoute } from '@/lib/routes';
+import { withTimeout } from '@/lib/timeout';
 import { supabase } from '@/lib/supabase';
 
 /**
@@ -49,7 +50,11 @@ let currentToken: string | undefined;
 
 async function expoToken(): Promise<string> {
   const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
-  const { data } = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+  const { data } = await withTimeout(
+    Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined),
+    10_000,
+    'push token',
+  );
   return data;
 }
 
@@ -90,8 +95,17 @@ export async function refreshPushRegistration(): Promise<void> {
 /** Stops notifications to this phone — on sign-out, before the session ends. */
 export async function disablePush(): Promise<void> {
   try {
-    const token = currentToken ?? (pushSupport() === 'ok' ? await expoToken() : undefined);
-    if (token) await supabase.rpc('unregister_push_device', { p_token: token });
+    let token = currentToken;
+    // Only ask iOS for the token when notifications are actually on: without
+    // permission it can leave the request unanswered forever — which used to
+    // freeze sign-out in the real app. Every step is time-boxed for the same
+    // reason; this is best effort and must never hold anything up.
+    if (!token && pushSupport() === 'ok' && (await withTimeout(pushStatus(), 2000, 'push status')) === 'on') {
+      token = await withTimeout(expoToken(), 3000, 'push token');
+    }
+    if (token) {
+      await withTimeout(Promise.resolve(supabase.rpc('unregister_push_device', { p_token: token })), 4000, 'unregister');
+    }
   } catch {
     // Signing out must never be blocked by this.
   } finally {

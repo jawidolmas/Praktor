@@ -14,9 +14,15 @@ import { keychainStorage } from '@/lib/keychain-storage';
 export const SUPABASE_URL = 'https://xzochoyigfnrtjxchmkr.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_3_VDFKUI2jcXcU3WP_fsnQ_Se9fro3p';
 
+/** Where the session lives in the Keychain. Spelled out (it's Supabase's own
+ *  default, so existing sign-ins carry over) because sign-out must be able
+ *  to clear it directly when the server can't be reached. */
+export const AUTH_STORAGE_KEY = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: keychainStorage,
+    storageKey: AUTH_STORAGE_KEY,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
