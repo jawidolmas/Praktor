@@ -11,7 +11,7 @@ coding itself.
 
 ## Status
 
-This is v0.1. What exists today:
+Current release: **v3.0.0** ([release notes](https://github.com/jawidolmas/Praktor/releases/tag/v3.0.0)). What exists today:
 
 - Plain-English intake (`exec-agent do "..."`) that resolves the target repo, then routes the
   sentence: an obviously single step ("add/create `<file>`") gets a real, specific check and
@@ -197,12 +197,18 @@ the daemon does that.
 
 ## Phone (iOS app)
 
-The Praktor iOS app (in development, TestFlight first) lets you start work, answer decisions and
-merge finished work from your phone, and notifies you when a decision needs you, when work is
+The Praktor iOS app (version 1.0.0, currently in TestFlight beta) lets you start work from a chat,
+answer decisions and merge finished work from your phone, and notifies you when a decision needs you, when work is
 ready to merge, or when an objective fails. Pair a computer once with
 `exec-agent cloud connect` and scan the code it shows from the app; the daemon then keeps the app
 current over outbound connections only. Status, costs, decisions and changed file *names* sync —
 never source code or diffs.
+
+Sign in with Apple or Google; the session is kept only in the iOS Keychain, and Sign Out always
+signs this phone out, even offline. Messages that aren't a task ("thanks") get a short reply
+instead of starting work. `exec-agent cloud status` shows the pairing, and
+`exec-agent cloud disconnect` revokes it. After updating Praktor, restart the daemon
+(`exec-agent daemon stop` then `exec-agent daemon start`) so the app sees the new features.
 
 A decision unanswered for 5 minutes stops that worker session rather than leaving it idling on a
 question that might not get answered for hours — not because the wait costs tokens (it doesn't;
@@ -265,14 +271,19 @@ it isn't installed, or its build fails for a specific repo, the worker still run
 that MCP server for the attempt), and a `graphify.unavailable` event is written to the objective's
 event log rather than the gap passing silently.
 
-## Policy engine
+## Development
+
+```bash
+npm run typecheck   # tsc --build across the whole workspace
 npm test            # vitest, full suite
+npm run mobile      # the iOS app in Expo Go
 ```
 
-`packages/core`, `packages/db`, `packages/policy`, and `packages/worker` hold the domain types,
-storage layer, policy engine, and Claude Code driver respectively. `apps/cli` submits objectives
-and tails their event log; `apps/daemon` is the only process that actually drives one; `apps/web`
-is the dashboard.
+`packages/core`, `packages/db`, `packages/policy`, `packages/worker` and `packages/cloud` hold the
+domain types, storage layer, policy engine, Claude Code driver and phone relay respectively.
+`apps/cli` submits objectives and tails their event log; `apps/daemon` is the only process that
+actually drives one; `apps/web` is the dashboard; `apps/mobile` is the iOS app; `apps/site` is
+the website.
 
 ## License
 
